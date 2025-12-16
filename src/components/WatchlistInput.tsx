@@ -153,11 +153,6 @@ export function WatchlistInput({ watchlist, setWatchlist }: WatchlistInputProps)
     );
   };
 
-  // Check if item needs platform selection (no TMDB providers)
-  const needsPlatformSelection = (item: WatchlistItem) => {
-    return item.providers.length === 0 && !item.userSelectedProvider && !item.pendingPlatformSelection;
-  };
-
   // Get effective providers for display (user-selected or TMDB)
   const getEffectiveProviders = (item: WatchlistItem): string[] => {
     if (item.userSelectedProvider) return [item.userSelectedProvider];
@@ -172,16 +167,16 @@ export function WatchlistInput({ watchlist, setWatchlist }: WatchlistInputProps)
     setWatchlist([]);
   };
 
-  const getPriorityColor = (priority: string) => {
+  const getPriorityDotClass = (priority: string) => {
     switch (priority) {
       case "high":
-        return "bg-destructive/20 text-destructive border-destructive/30";
+        return "priority-dot-high";
       case "medium":
-        return "bg-warning/20 text-warning border-warning/30";
+        return "priority-dot-medium";
       case "low":
-        return "bg-muted text-muted-foreground border-border";
+        return "priority-dot-low";
       default:
-        return "bg-muted text-muted-foreground border-border";
+        return "priority-dot-low";
     }
   };
 
@@ -189,18 +184,17 @@ export function WatchlistInput({ watchlist, setWatchlist }: WatchlistInputProps)
     STREAMING_SERVICES.find((s) => s.id === id)?.name || id;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <h2 className="font-display text-lg font-semibold">Your Watchlist</h2>
-        <div className="flex gap-2">
-          <Button variant="ghost" size="sm" onClick={loadSampleData}>
-            <Wand2 className="w-4 h-4 mr-1" />
+        <h2 className="font-display text-base font-semibold tracking-tight">Your Watchlist</h2>
+        <div className="flex gap-1">
+          <Button variant="ghost" size="sm" onClick={loadSampleData} className="text-xs h-8 px-2.5">
+            <Wand2 className="w-3.5 h-3.5 mr-1" />
             Load Sample
           </Button>
           {watchlist.length > 0 && (
-            <Button variant="ghost" size="sm" onClick={clearAll}>
-              <Trash2 className="w-4 h-4 mr-1" />
-              Clear
+            <Button variant="ghost" size="sm" onClick={clearAll} className="text-xs h-8 px-2.5 text-muted-foreground hover:text-destructive">
+              <Trash2 className="w-3.5 h-3.5" />
             </Button>
           )}
         </div>
@@ -220,7 +214,7 @@ export function WatchlistInput({ watchlist, setWatchlist }: WatchlistInputProps)
             onFocus={() => setShowSuggestions(true)}
             onBlur={() => setTimeout(() => setShowSuggestions(false), 300)}
             placeholder="Search movies and TV shows..."
-            className="w-full h-11 pl-10 pr-10 rounded-lg bg-secondary border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all"
+            className="w-full h-10 pl-10 pr-10 rounded-lg bg-secondary/50 border border-border/50 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary/50 transition-all text-sm"
           />
           {isSearching && (
             <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground animate-spin" />
@@ -229,44 +223,44 @@ export function WatchlistInput({ watchlist, setWatchlist }: WatchlistInputProps)
 
         {/* Search Results Dropdown */}
         {showSuggestions && (inputValue.length >= 2) && (
-          <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-lg overflow-hidden shadow-xl z-20 max-h-[400px] overflow-y-auto">
+          <div className="absolute top-full left-0 right-0 mt-2 bg-card border border-border/50 rounded-xl overflow-hidden shadow-elevated z-20 max-h-[360px] overflow-y-auto">
             {isSearching ? (
-              <div className="p-4 text-center text-muted-foreground">
+              <div className="p-6 text-center text-muted-foreground">
                 <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />
-                Searching...
+                <span className="text-sm">Searching...</span>
               </div>
             ) : searchResults.length > 0 ? (
               searchResults.map((result) => (
                 <button
                   key={result.id}
-                  className="w-full px-3 py-3 text-left hover:bg-secondary transition-colors flex gap-3 items-start border-b border-border/50 last:border-0"
+                  className="w-full px-3 py-3 text-left hover:bg-secondary/50 transition-colors duration-150 flex gap-3 items-start border-b border-border/30 last:border-0"
                   onClick={() => addFromTMDB(result)}
                 >
                   {result.poster ? (
                     <img
                       src={result.poster}
                       alt={result.title}
-                      className="w-12 h-16 object-cover rounded"
+                      className="w-10 h-14 object-cover rounded"
                     />
                   ) : (
-                    <div className="w-12 h-16 bg-muted rounded flex items-center justify-center text-xs text-muted-foreground">
+                    <div className="w-10 h-14 bg-muted rounded flex items-center justify-center text-[10px] text-muted-foreground">
                       No img
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="font-medium truncate">{result.title}</span>
+                      <span className="font-medium text-sm truncate">{result.title}</span>
                       {result.year && (
                         <span className="text-xs text-muted-foreground">
                           ({result.year})
                         </span>
                       )}
                     </div>
-                    <span className="text-xs text-primary capitalize">
+                    <span className="text-xs text-muted-foreground capitalize">
                       {result.type === "tv" ? "TV Series" : "Movie"}
                     </span>
                     {result.providers.length > 0 && (
-                      <div className="flex gap-1 mt-1">
+                      <div className="flex gap-1 mt-1.5">
                         {result.providers.slice(0, 4).map((p) => (
                           <img
                             key={p.id}
@@ -277,18 +271,18 @@ export function WatchlistInput({ watchlist, setWatchlist }: WatchlistInputProps)
                           />
                         ))}
                         {result.providers.length > 4 && (
-                          <span className="text-xs text-muted-foreground">
+                          <span className="text-xs text-muted-foreground ml-1">
                             +{result.providers.length - 4}
                           </span>
                         )}
                       </div>
                     )}
                   </div>
-                  <Plus className="w-5 h-5 text-muted-foreground flex-shrink-0 mt-1" />
+                  <Plus className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-2" />
                 </button>
               ))
             ) : (
-              <div className="p-4 text-center text-muted-foreground text-sm">
+              <div className="p-6 text-center text-muted-foreground text-sm">
                 No results found for "{inputValue}"
               </div>
             )}
@@ -298,48 +292,48 @@ export function WatchlistInput({ watchlist, setWatchlist }: WatchlistInputProps)
 
       {/* Watchlist Items */}
       {watchlist.length === 0 ? (
-        <div className="text-center py-8 text-muted-foreground">
-          <p>No items in your watchlist yet.</p>
-          <p className="text-sm mt-1">Search for movies/shows or click "Load Sample" to get started.</p>
+        <div className="text-center py-10 text-muted-foreground">
+          <p className="text-sm">No items in your watchlist yet.</p>
+          <p className="text-xs mt-1">Search for movies/shows or click "Load Sample" to get started.</p>
         </div>
       ) : (
-        <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2">
+        <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
           {watchlist.map((item, index) => (
             <div
               key={item.id}
-              className="glass rounded-lg p-3 flex items-center gap-3 animate-slide-up"
-              style={{ animationDelay: `${index * 50}ms` }}
+              className="content-card p-3 flex items-center gap-3 animate-slide-up"
+              style={{ animationDelay: `${index * 40}ms` }}
             >
               {item.poster && (
                 <img
                   src={item.poster}
                   alt={item.title}
-                  className="w-10 h-14 object-cover rounded"
+                  className="w-9 h-12 object-cover rounded"
                 />
               )}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="font-medium truncate">{item.title}</span>
+                  <div className={cn("priority-dot", getPriorityDotClass(item.priority))} />
+                  <span className="font-medium text-sm truncate">{item.title}</span>
                   {item.year && (
                     <span className="text-xs text-muted-foreground">
                       ({item.year})
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-2 mt-1">
+                <div className="flex items-center gap-2 mt-1 ml-4">
                   {/* Show platform selector if no TMDB providers */}
                   {item.providers.length === 0 && !item.userSelectedProvider ? (
                     item.pendingPlatformSelection ? (
-                      <span className="flex items-center gap-1 text-xs text-warning italic">
-                        Pending selection
+                      <span className="flex items-center gap-1 text-xs text-warning/80">
+                        Pending
                         <button 
                           onClick={() => setWatchlist(watchlist.map(i => 
                             i.id === item.id ? { ...i, pendingPlatformSelection: false } : i
                           ))}
-                          className="text-muted-foreground hover:text-primary ml-1"
-                          title="Select platform"
+                          className="text-muted-foreground hover:text-primary ml-1 underline"
                         >
-                          (select)
+                          select
                         </button>
                       </span>
                     ) : (
@@ -353,15 +347,14 @@ export function WatchlistInput({ watchlist, setWatchlist }: WatchlistInputProps)
                     <span className="text-xs text-muted-foreground">
                       {item.userSelectedProvider ? (
                         <span className="flex items-center gap-1">
-                          <span className="text-primary">{getServiceName(item.userSelectedProvider)}</span>
+                          <span className="text-foreground/80">{getServiceName(item.userSelectedProvider)}</span>
                           <button 
                             onClick={() => setWatchlist(watchlist.map(i => 
                               i.id === item.id ? { ...i, userSelectedProvider: undefined, pendingPlatformSelection: false } : i
                             ))}
-                            className="text-muted-foreground hover:text-destructive ml-1"
-                            title="Change platform"
+                            className="text-muted-foreground hover:text-primary underline"
                           >
-                            (change)
+                            change
                           </button>
                         </span>
                       ) : (
@@ -373,35 +366,34 @@ export function WatchlistInput({ watchlist, setWatchlist }: WatchlistInputProps)
               </div>
 
               {/* Priority Selector */}
-              <div className="flex gap-1">
+              <div className="flex gap-0.5">
                 {(["high", "medium", "low"] as const).map((p) => (
                   <button
                     key={p}
                     onClick={() => updatePriority(item.id, p)}
                     className={cn(
-                      "px-2 py-0.5 text-xs rounded border capitalize transition-all",
+                      "w-2 h-2 rounded-full transition-all duration-150",
                       item.priority === p
-                        ? getPriorityColor(p)
-                        : "bg-transparent text-muted-foreground border-transparent hover:bg-secondary"
+                        ? getPriorityDotClass(p)
+                        : "bg-muted hover:bg-muted-foreground/30"
                     )}
-                  >
-                    {p}
-                  </button>
+                    title={p.charAt(0).toUpperCase() + p.slice(1)}
+                  />
                 ))}
               </div>
 
               <button
                 onClick={() => removeItem(item.id)}
-                className="p-1 text-muted-foreground hover:text-destructive transition-colors"
+                className="p-1.5 text-muted-foreground hover:text-destructive transition-colors duration-150 rounded hover:bg-destructive/10"
               >
-                <X className="w-4 h-4" />
+                <X className="w-3.5 h-3.5" />
               </button>
             </div>
           ))}
         </div>
       )}
 
-      <p className="text-xs text-muted-foreground text-center">
+      <p className="text-[10px] text-muted-foreground/60 text-center uppercase tracking-wide">
         {watchlist.length} items in watchlist • Powered by TMDB
       </p>
     </div>
