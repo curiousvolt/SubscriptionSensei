@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, X, Trash2, Wand2, Search, Loader2 } from "lucide-react";
+import { Plus, X, Trash2, Search, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { WatchlistItem, SAMPLE_WATCHLIST } from "@/data/sampleContent";
 import { STREAMING_SERVICES, PROVIDER_MAP } from "@/data/services";
@@ -192,18 +192,12 @@ export function WatchlistInput({ watchlist, setWatchlist }: WatchlistInputProps)
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-lg font-semibold">Your Watchlist</h2>
-        <div className="flex gap-2">
-          <Button variant="ghost" size="sm" onClick={loadSampleData}>
-            <Wand2 className="w-4 h-4 mr-1" />
-            Load Sample
+        {watchlist.length > 0 && (
+          <Button variant="ghost" size="sm" onClick={clearAll}>
+            <Trash2 className="w-4 h-4 mr-1" />
+            Clear
           </Button>
-          {watchlist.length > 0 && (
-            <Button variant="ghost" size="sm" onClick={clearAll}>
-              <Trash2 className="w-4 h-4 mr-1" />
-              Clear
-            </Button>
-          )}
-        </div>
+        )}
       </div>
 
       {/* Search Input */}
