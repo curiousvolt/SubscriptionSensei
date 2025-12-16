@@ -292,7 +292,7 @@ function selectPlatformsForMonth(
 }
 
 // ------------------------------
-// FUNCTION: Schedule Content for Month
+// FUNCTION: Schedule Content for Month (Fair/Proportional within Priority Buckets)
 // ------------------------------
 function scheduleContentForMonth(
   selectedPlatforms: OptimizedService[],
@@ -313,30 +313,55 @@ function scheduleContentForMonth(
     }
   }
   
-  // Sort: HIGH priority first, then MEDIUM, then LOW; Movies before Series
-  const priorityOrder: Record<string, number> = { high: 3, medium: 2, low: 1 };
-  candidateContent.sort((a, b) => {
-    const priorityDiff = (priorityOrder[b.item.priority] || 1) - (priorityOrder[a.item.priority] || 1);
-    if (priorityDiff !== 0) return priorityDiff;
-    // Movies before series
-    if (a.item.type === "movie" && b.item.type !== "movie") return -1;
-    if (a.item.type !== "movie" && b.item.type === "movie") return 1;
-    return 0;
-  });
+  // Group content by priority buckets
+  const priorityBuckets: Record<string, ContentState[]> = {
+    high: [],
+    medium: [],
+    low: [],
+  };
+  
+  for (const state of candidateContent) {
+    const priority = state.item.priority || "low";
+    priorityBuckets[priority].push(state);
+  }
+  
+  // Within each bucket, sort: Movies before Series (movies need single sitting)
+  for (const priority of Object.keys(priorityBuckets)) {
+    priorityBuckets[priority].sort((a, b) => {
+      if (a.item.type === "movie" && b.item.type !== "movie") return -1;
+      if (a.item.type !== "movie" && b.item.type === "movie") return 1;
+      return 0;
+    });
+  }
   
   const scheduledItems: ScheduledItem[] = [];
   let remainingTimeHours = MONTHLY_WATCH_LIMIT;
   let currentDay = 1;
   let dailyRemainingHours = DAILY_WATCH_HOURS;
   
-  for (const state of candidateContent) {
+  // Track scheduled hours per item for this month
+  const scheduledHoursThisMonth = new Map<string, number>();
+  
+  // Process priority buckets in order: HIGH → MEDIUM → LOW
+  const priorityOrder = ["high", "medium", "low"];
+  
+  for (const priority of priorityOrder) {
+    const bucket = priorityBuckets[priority];
+    if (bucket.length === 0) continue;
     if (remainingTimeHours <= 0) break;
     
-    const itemEffHours = state.remainingMinutes / 60;
+    // FAIR SCHEDULING: Use proportional allocation within the bucket
+    // First, schedule all movies in this bucket (they need single sitting)
+    const movies = bucket.filter(s => s.item.type === "movie");
+    const series = bucket.filter(s => s.item.type !== "movie");
     
-    if (state.item.type === "movie") {
-      // Movies must be watched in one sitting
-      if (itemEffHours <= remainingTimeHours) {
+    // Schedule movies first (single sitting requirement)
+    for (const state of movies) {
+      if (remainingTimeHours <= 0) break;
+      
+      const movieEffHours = state.remainingMinutes / 60;
+      
+      if (movieEffHours <= remainingTimeHours) {
         const startDate = new Date(monthStart);
         startDate.setDate(startDate.getDate() + currentDay - 1);
         
@@ -345,63 +370,114 @@ function scheduleContentForMonth(
           day: currentDay,
           estimatedStartDate: new Date(startDate),
           estimatedEndDate: new Date(startDate),
-          watchHours: itemEffHours,
+          watchHours: movieEffHours,
         });
         
-        // Mark movie as fully watched
         state.remainingMinutes = 0;
-        remainingTimeHours -= itemEffHours;
+        remainingTimeHours -= movieEffHours;
+        scheduledHoursThisMonth.set(state.item.id, movieEffHours);
         
-        // Move to next day after movie
         currentDay += 1;
         dailyRemainingHours = DAILY_WATCH_HOURS;
       }
-      // If movie doesn't fit this month, skip it (will be scheduled next month)
-    } else {
-      // Series: can be split across days/months
-      const availableMinutes = remainingTimeHours * 60;
-      const toWatchMinutes = Math.min(state.remainingMinutes, availableMinutes);
+      // Skip movies that don't fit (will be scheduled next month)
+    }
+    
+    // PROPORTIONAL ALLOCATION for series within same priority bucket
+    // Calculate total remaining minutes for series in this bucket
+    const activeSeries = series.filter(s => s.remainingMinutes > 0);
+    if (activeSeries.length === 0 || remainingTimeHours <= 0) continue;
+    
+    const totalSeriesMinutes = activeSeries.reduce((sum, s) => sum + s.remainingMinutes, 0);
+    const availableMinutesForSeries = remainingTimeHours * 60;
+    
+    // Proportional time allocation per series
+    // Each series gets time proportional to its remaining minutes
+    const allocations = new Map<string, number>();
+    
+    for (const state of activeSeries) {
+      // Proportional share = (item's remaining / total remaining) * available time
+      const proportion = state.remainingMinutes / totalSeriesMinutes;
+      const allocatedMinutes = Math.min(
+        state.remainingMinutes,
+        Math.floor(proportion * availableMinutesForSeries)
+      );
+      allocations.set(state.item.id, allocatedMinutes);
+    }
+    
+    // Distribute any rounding remainder fairly (round-robin)
+    let allocatedTotal = Array.from(allocations.values()).reduce((a, b) => a + b, 0);
+    let remainderMinutes = availableMinutesForSeries - allocatedTotal;
+    let seriesIndex = 0;
+    
+    while (remainderMinutes > 0 && activeSeries.length > 0) {
+      const state = activeSeries[seriesIndex % activeSeries.length];
+      const currentAlloc = allocations.get(state.item.id) || 0;
+      const maxCanAdd = state.remainingMinutes - currentAlloc;
       
-      if (toWatchMinutes > 0) {
-        const startDay = currentDay;
-        const startDate = new Date(monthStart);
-        startDate.setDate(startDate.getDate() + startDay - 1);
+      if (maxCanAdd > 0) {
+        const toAdd = Math.min(maxCanAdd, 30); // Add in 30-min chunks
+        allocations.set(state.item.id, currentAlloc + toAdd);
+        remainderMinutes -= toAdd;
+      }
+      
+      seriesIndex++;
+      // Prevent infinite loop
+      if (seriesIndex > activeSeries.length * 10) break;
+    }
+    
+    // Schedule series with their allocated time
+    for (const state of activeSeries) {
+      const allocatedMinutes = allocations.get(state.item.id) || 0;
+      if (allocatedMinutes <= 0) continue;
+      
+      const startDay = currentDay;
+      const startDate = new Date(monthStart);
+      startDate.setDate(startDate.getDate() + startDay - 1);
+      
+      // Simulate day-by-day watching
+      let watchedMinutes = 0;
+      const episodeDuration = state.rawMinutes / (state.item.episodeCount || 10);
+      const effEpisodeDuration = episodeDuration * (PRIORITY_WEIGHT[state.item.priority] ?? PRIORITY_WEIGHT.low);
+      
+      while (watchedMinutes < allocatedMinutes && currentDay <= DAYS_IN_MONTH) {
+        const episodeHours = effEpisodeDuration / 60;
         
-        // Simulate day-by-day watching for series
-        let watchedMinutes = 0;
-        const episodeDuration = state.rawMinutes / (state.item.episodeCount || 10);
-        const effEpisodeDuration = episodeDuration * (PRIORITY_WEIGHT[state.item.priority] ?? PRIORITY_WEIGHT.low);
-        
-        while (watchedMinutes < toWatchMinutes && currentDay <= DAYS_IN_MONTH) {
-          const episodeHours = effEpisodeDuration / 60;
-          
-          if (dailyRemainingHours < episodeHours) {
-            currentDay += 1;
-            dailyRemainingHours = DAILY_WATCH_HOURS;
-          }
-          
-          const canWatch = Math.min(dailyRemainingHours * 60, toWatchMinutes - watchedMinutes);
-          watchedMinutes += canWatch;
-          dailyRemainingHours -= canWatch / 60;
+        if (dailyRemainingHours < episodeHours && dailyRemainingHours < 0.5) {
+          currentDay += 1;
+          dailyRemainingHours = DAILY_WATCH_HOURS;
         }
         
-        const endDate = new Date(monthStart);
-        endDate.setDate(endDate.getDate() + currentDay - 1);
+        const canWatch = Math.min(dailyRemainingHours * 60, allocatedMinutes - watchedMinutes);
+        watchedMinutes += canWatch;
+        dailyRemainingHours -= canWatch / 60;
         
-        const watchedHours = toWatchMinutes / 60;
-        
-        scheduledItems.push({
-          ...state.item,
-          day: startDay,
-          estimatedStartDate: new Date(startDate),
-          estimatedEndDate: new Date(endDate),
-          watchHours: watchedHours,
-          remainingMinutes: state.remainingMinutes - toWatchMinutes,
-        });
-        
-        state.remainingMinutes -= toWatchMinutes;
-        remainingTimeHours -= watchedHours;
+        if (dailyRemainingHours <= 0) {
+          currentDay += 1;
+          dailyRemainingHours = DAILY_WATCH_HOURS;
+        }
       }
+      
+      const endDate = new Date(monthStart);
+      endDate.setDate(endDate.getDate() + Math.max(currentDay - 1, startDay));
+      
+      const watchedHours = allocatedMinutes / 60;
+      
+      scheduledItems.push({
+        ...state.item,
+        day: startDay,
+        estimatedStartDate: new Date(startDate),
+        estimatedEndDate: new Date(endDate),
+        watchHours: watchedHours,
+        remainingMinutes: state.remainingMinutes - allocatedMinutes,
+      });
+      
+      state.remainingMinutes -= allocatedMinutes;
+      remainingTimeHours -= watchedHours;
+      scheduledHoursThisMonth.set(
+        state.item.id,
+        (scheduledHoursThisMonth.get(state.item.id) || 0) + watchedHours
+      );
     }
   }
   
