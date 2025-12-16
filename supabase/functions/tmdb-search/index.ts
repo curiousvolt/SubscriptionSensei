@@ -28,15 +28,10 @@ serve(async (req) => {
     console.log(`Searching TMDB for: ${query}, type: ${type || 'multi'}`);
 
     const searchType = type || "multi";
-    const response = await fetch(
-      `https://api.themoviedb.org/3/search/${searchType}?query=${encodeURIComponent(query)}&include_adult=false&language=en-US&page=1`,
-      {
-        headers: {
-          Authorization: `Bearer ${TMDB_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+    // Use API key as query parameter (v3 API method)
+    const searchUrl = `https://api.themoviedb.org/3/search/${searchType}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&include_adult=false&language=en-US&page=1`;
+    
+    const response = await fetch(searchUrl);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -53,15 +48,8 @@ serve(async (req) => {
         if (mediaType === "person") return null;
         
         try {
-          const providersResponse = await fetch(
-            `https://api.themoviedb.org/3/${mediaType}/${item.id}/watch/providers`,
-            {
-              headers: {
-                Authorization: `Bearer ${TMDB_API_KEY}`,
-                "Content-Type": "application/json",
-              },
-            }
-          );
+          const providersUrl = `https://api.themoviedb.org/3/${mediaType}/${item.id}/watch/providers?api_key=${TMDB_API_KEY}`;
+          const providersResponse = await fetch(providersUrl);
           
           const providersData = await providersResponse.json();
           const usProviders = providersData.results?.US?.flatrate || [];
