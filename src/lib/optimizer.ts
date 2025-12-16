@@ -671,6 +671,30 @@ function scheduleContentForMonth(
     }
   }
   
+  // DISPLAY ORDER: Sort scheduled items deterministically for consistent display
+  // This does NOT affect scheduling logic, only the order items appear in the UI
+  const priorityRank: Record<string, number> = { high: 0, medium: 1, low: 2 };
+  
+  scheduledItems.sort((a, b) => {
+    // 1. Priority (high > medium > low)
+    const priorityA = priorityRank[a.priority] ?? 2;
+    const priorityB = priorityRank[b.priority] ?? 2;
+    if (priorityA !== priorityB) return priorityA - priorityB;
+    
+    // 2. Larger remaining effective watch time first
+    const remainingA = a.remainingMinutes ?? 0;
+    const remainingB = b.remainingMinutes ?? 0;
+    if (remainingA !== remainingB) return remainingB - remainingA;
+    
+    // 3. Item that completes earlier first
+    const endA = a.estimatedEndDate.getTime();
+    const endB = b.estimatedEndDate.getTime();
+    if (endA !== endB) return endA - endB;
+    
+    // 4. Stable deterministic fallback: alphabetical by title
+    return a.title.localeCompare(b.title);
+  });
+
   const totalWatchedHours = MONTHLY_WATCH_LIMIT - remainingTimeHours;
   return { scheduledItems, totalWatchedHours };
 }
