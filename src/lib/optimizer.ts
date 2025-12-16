@@ -1,36 +1,31 @@
 import { WatchlistItem } from "@/data/sampleContent";
 import { STREAMING_SERVICES } from "@/data/services";
 
-// ------------------------------
-// CONSTANTS AND ASSUMPTIONS
-// ------------------------------
+// ============================================
+// CONSTANTS
+// ============================================
 const DAILY_WATCH_HOURS = 2;
 const DAYS_IN_MONTH = 30;
 const MONTHLY_WATCH_LIMIT = DAILY_WATCH_HOURS * DAYS_IN_MONTH; // 60 hours
 
-// Platform prices (USD) - as specified in algorithm
 const PLATFORM_PRICES: Record<string, number> = {
   netflix: 7.99,
   disney: 9.99,
   hulu: 9.99,
   disney_hulu_bundle: 10.99,
-  hbo: 10.99, // Max
-  amazon: 8.99, // Prime Video
+  hbo: 10.99,
+  amazon: 8.99,
   paramount: 7.99,
   peacock: 8.99,
   apple: 12.99,
 };
 
-// Priority weights - higher weight = more effective time needed
-const PRIORITY_WEIGHT: Record<string, number> = {
-  high: 1.0,
-  medium: 1.5,
-  low: 2.0,
-};
+// Priority is ORDINAL only - no multipliers
+const PRIORITY_ORDER: readonly string[] = ["high", "medium", "low"] as const;
 
-// ------------------------------
+// ============================================
 // INTERFACES
-// ------------------------------
+// ============================================
 export interface OptimizedService {
   service: string;
   serviceName: string;
@@ -73,32 +68,35 @@ export interface OptimizationResult {
   averageMonthlyCost: number;
 }
 
-// ------------------------------
-// HELPER: Get Raw Watch Time (minutes)
-// ------------------------------
-function getRawWatchTimeMinutes(item: WatchlistItem): number {
+// Internal state tracking - uses REAL minutes only
+interface ContentState {
+  item: WatchlistItem;
+  realMinutes: number;        // Actual watch time from TMDB
+  remainingMinutes: number;   // How much is left to watch
+}
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+/**
+ * Get REAL watch time in minutes - NO MULTIPLIERS
+ */
+function getRealWatchTimeMinutes(item: WatchlistItem): number {
   if (item.totalWatchTimeMinutes) {
     return item.totalWatchTimeMinutes;
   }
-  
   if (item.type === "movie") {
     return 120; // Default movie ~2 hours
-  } else {
-    const episodes = item.episodeCount || 10;
-    return episodes * 45; // ~45 min per episode
   }
+  const episodes = item.episodeCount || 10;
+  return episodes * 45; // ~45 min per episode
 }
 
-// ------------------------------
-// HELPER: Get Platform Price
-// ------------------------------
 function getPlatformPrice(serviceId: string): number {
   return PLATFORM_PRICES[serviceId] ?? STREAMING_SERVICES.find(s => s.id === serviceId)?.price ?? 9.99;
 }
 
-// ------------------------------
-// HELPER: Get Platform Info
-// ------------------------------
 function getPlatformInfo(serviceId: string) {
   const service = STREAMING_SERVICES.find(s => s.id === serviceId);
   return {
@@ -107,438 +105,301 @@ function getPlatformInfo(serviceId: string) {
   };
 }
 
-// ------------------------------
-// PREPROCESS: Calculate Effective Minutes
-// ------------------------------
-interface ContentState {
-  item: WatchlistItem;
-  rawMinutes: number;
-  effMinutes: number;
-  remainingMinutes: number;
-}
-
-function preprocessContent(watchlist: WatchlistItem[]): Map<string, ContentState> {
-  const contentMap = new Map<string, ContentState>();
-  
-  for (const item of watchlist) {
-    const rawMinutes = getRawWatchTimeMinutes(item);
-    const weight = PRIORITY_WEIGHT[item.priority] ?? PRIORITY_WEIGHT.low;
-    const effMinutes = rawMinutes * weight;
-    
-    contentMap.set(item.id, {
-      item,
-      rawMinutes,
-      effMinutes,
-      remainingMinutes: effMinutes,
-    });
-  }
-  
-  return contentMap;
-}
-
-// ------------------------------
-// HELPER: Get Effective Providers (user-selected overrides TMDB)
-// ------------------------------
 function getEffectiveProviders(item: WatchlistItem): string[] {
-  // User-selected provider takes precedence
   if (item.userSelectedProvider) {
     return [item.userSelectedProvider];
   }
   return item.providers;
 }
 
-// ------------------------------
-// HELPER: Check if item should be scheduled
-// ------------------------------
 function shouldScheduleItem(item: WatchlistItem): boolean {
-  // Skip items with pending platform selection
-  if (item.pendingPlatformSelection) {
-    return false;
-  }
-  // Skip items with no providers (and no user selection)
-  if (item.providers.length === 0 && !item.userSelectedProvider) {
-    return false;
-  }
+  if (item.pendingPlatformSelection) return false;
+  if (item.providers.length === 0 && !item.userSelectedProvider) return false;
   return true;
 }
 
-// ------------------------------
-// HELPER: Check if all priorities are the same (degenerate state)
-// ------------------------------
-function isUniformPriority(watchlist: WatchlistItem[], contentState: Map<string, ContentState>): boolean {
-  const priorities = new Set<string>();
+/**
+ * Initialize content state with REAL watch times only
+ */
+function initializeContentState(watchlist: WatchlistItem[]): Map<string, ContentState> {
+  const contentMap = new Map<string, ContentState>();
+  
+  for (const item of watchlist) {
+    const realMinutes = getRealWatchTimeMinutes(item);
+    contentMap.set(item.id, {
+      item,
+      realMinutes,
+      remainingMinutes: realMinutes,
+    });
+  }
+  
+  return contentMap;
+}
+
+// ============================================
+// STEP A: IDENTIFY ACTIVE PRIORITY BUCKET
+// ============================================
+
+/**
+ * Find the highest priority level that still has unwatched content
+ */
+function getActivePriorityBucket(
+  watchlist: WatchlistItem[],
+  contentState: Map<string, ContentState>
+): { priority: string; items: WatchlistItem[] } | null {
+  
+  for (const priority of PRIORITY_ORDER) {
+    const items = watchlist.filter(item => {
+      if (!shouldScheduleItem(item)) return false;
+      const state = contentState.get(item.id);
+      return (item.priority || "low") === priority && state && state.remainingMinutes > 0;
+    });
+    
+    if (items.length > 0) {
+      return { priority, items };
+    }
+  }
+  
+  return null;
+}
+
+// ============================================
+// STEP B: MANDATORY PLATFORM INCLUSION
+// ============================================
+
+/**
+ * Get all required platforms for a set of items
+ * MUST include all platforms needed - cost optimization is secondary
+ */
+function getRequiredPlatforms(items: WatchlistItem[]): Set<string> {
+  const required = new Set<string>();
+  
+  for (const item of items) {
+    const providers = getEffectiveProviders(item);
+    if (providers.length > 0) {
+      // Add the cheapest provider for this item
+      let cheapest = providers[0];
+      let cheapestPrice = getPlatformPrice(providers[0]);
+      
+      for (const p of providers) {
+        const price = getPlatformPrice(p);
+        if (price < cheapestPrice) {
+          cheapest = p;
+          cheapestPrice = price;
+        }
+      }
+      required.add(cheapest);
+    }
+  }
+  
+  return required;
+}
+
+/**
+ * Select platforms for the month
+ * Priority items MUST have their platforms included
+ */
+function selectPlatformsForMonth(
+  activeBucket: { priority: string; items: WatchlistItem[] },
+  watchlist: WatchlistItem[],
+  contentState: Map<string, ContentState>,
+  budget: number,
+  previousPlatforms: Set<string>
+): OptimizedService[] {
+  const selectedIds = new Set<string>();
+  
+  // MANDATORY: Include all platforms required for active priority bucket
+  const requiredPlatforms = getRequiredPlatforms(activeBucket.items);
+  for (const platformId of requiredPlatforms) {
+    selectedIds.add(platformId);
+  }
+  
+  // OPTIONAL: If budget allows, add platforms for lower priority items
+  let currentCost = Array.from(selectedIds).reduce((sum, id) => sum + getPlatformPrice(id), 0);
+  
+  // Get lower priority items that could benefit from additional platforms
+  const lowerPriorityItems = watchlist.filter(item => {
+    if (!shouldScheduleItem(item)) return false;
+    const state = contentState.get(item.id);
+    const itemPriority = item.priority || "low";
+    const priorityIdx = PRIORITY_ORDER.indexOf(itemPriority);
+    const activePriorityIdx = PRIORITY_ORDER.indexOf(activeBucket.priority);
+    return priorityIdx > activePriorityIdx && state && state.remainingMinutes > 0;
+  });
+  
+  // Try to add platforms for lower priority items if budget allows
+  for (const item of lowerPriorityItems) {
+    const providers = getEffectiveProviders(item);
+    for (const provider of providers) {
+      if (selectedIds.has(provider)) continue;
+      
+      const cost = getPlatformPrice(provider);
+      if (currentCost + cost <= budget) {
+        // Prefer previously used platforms
+        if (previousPlatforms.has(provider)) {
+          selectedIds.add(provider);
+          currentCost += cost;
+          break;
+        }
+      }
+    }
+  }
+  
+  // Build OptimizedService array
+  const selectedPlatforms: OptimizedService[] = [];
+  
+  for (const serviceId of selectedIds) {
+    // Get all items this platform can serve (from current content state)
+    const coveredItems = watchlist.filter(item => {
+      if (!shouldScheduleItem(item)) return false;
+      const state = contentState.get(item.id);
+      const providers = getEffectiveProviders(item);
+      return providers.includes(serviceId) && state && state.remainingMinutes > 0;
+    });
+    
+    let totalWatchHours = 0;
+    for (const item of coveredItems) {
+      const state = contentState.get(item.id);
+      if (state) {
+        totalWatchHours += state.remainingMinutes / 60;
+      }
+    }
+    
+    const cost = getPlatformPrice(serviceId);
+    const { name, color } = getPlatformInfo(serviceId);
+    
+    selectedPlatforms.push({
+      service: serviceId,
+      serviceName: name,
+      cost,
+      itemsToWatch: coveredItems,
+      valueDensity: totalWatchHours / cost,
+      color,
+      watchTime: Math.min(totalWatchHours, MONTHLY_WATCH_LIMIT),
+    });
+  }
+  
+  // Sort by items count (most content first)
+  selectedPlatforms.sort((a, b) => b.itemsToWatch.length - a.itemsToWatch.length);
+  
+  return selectedPlatforms;
+}
+
+// ============================================
+// STEP C & D: FAIR SCHEDULING
+// ============================================
+
+/**
+ * Schedule content for a month with FAIR progress
+ * 
+ * Rules:
+ * - Process one priority bucket at a time
+ * - Within a bucket, ALL items progress together (fair share)
+ * - Movies are scheduled in single sittings before series
+ * - Leftover time redistributed to items that need more
+ * - Only move to lower priority if current bucket exhausted AND time remains
+ */
+function scheduleContentForMonth(
+  selectedPlatforms: OptimizedService[],
+  contentState: Map<string, ContentState>,
+  watchlist: WatchlistItem[],
+  monthStart: Date
+): { scheduledItems: ScheduledItem[]; totalWatchedHours: number } {
+  
+  // Get all schedulable content from selected platforms
+  const availablePlatformIds = new Set(selectedPlatforms.map(p => p.service));
+  const candidateItems: ContentState[] = [];
+  const addedIds = new Set<string>();
   
   for (const item of watchlist) {
     if (!shouldScheduleItem(item)) continue;
     const state = contentState.get(item.id);
-    if (state && state.remainingMinutes > 0) {
-      priorities.add(item.priority || "low");
-    }
-  }
-  
-  return priorities.size <= 1;
-}
-
-// ------------------------------
-// FUNCTION: Calculate Platform Potential
-// ------------------------------
-function calculatePlatformPotential(
-  serviceId: string,
-  watchlist: WatchlistItem[],
-  contentState: Map<string, ContentState>
-): { potentialHours: number; coveredItems: WatchlistItem[] } {
-  const coveredItems = watchlist.filter(item => {
-    if (!shouldScheduleItem(item)) return false;
-    const state = contentState.get(item.id);
-    const effectiveProviders = getEffectiveProviders(item);
-    return effectiveProviders.includes(serviceId) && state && state.remainingMinutes > 0;
-  });
-  
-  if (coveredItems.length === 0) {
-    return { potentialHours: 0, coveredItems: [] };
-  }
-  
-  let totalRemainingMinutes = 0;
-  for (const item of coveredItems) {
-    const state = contentState.get(item.id);
-    if (state) {
-      totalRemainingMinutes += state.remainingMinutes;
-    }
-  }
-  
-  const potentialHours = Math.min(totalRemainingMinutes / 60, MONTHLY_WATCH_LIMIT);
-  return { potentialHours, coveredItems };
-}
-
-// ------------------------------
-// FUNCTION: Secondary Optimization - Platform Selection for Uniform Priority
-// ------------------------------
-function selectPlatformsUniformPriority(
-  watchlist: WatchlistItem[],
-  contentState: Map<string, ContentState>,
-  userBudget: number,
-  previousPlatforms: Set<string>
-): OptimizedService[] {
-  // Get all remaining schedulable content
-  const remainingContent = watchlist.filter(item => {
-    if (!shouldScheduleItem(item)) return false;
-    const state = contentState.get(item.id);
-    return state && state.remainingMinutes > 0;
-  });
-
-  if (remainingContent.length === 0) return [];
-
-  // Build platform -> content mapping with coverage stats
-  const platformStats = new Map<string, {
-    coveredItems: WatchlistItem[];
-    totalMinutes: number;
-    cost: number;
-    wasPreviouslyUsed: boolean;
-  }>();
-
-  const allPlatforms = new Set<string>();
-  for (const item of remainingContent) {
+    if (!state || state.remainingMinutes <= 0) continue;
+    if (addedIds.has(item.id)) continue;
+    
+    // Check if item's platform is selected this month
     const providers = getEffectiveProviders(item);
-    providers.forEach(p => allPlatforms.add(p));
-  }
-
-  for (const platformId of allPlatforms) {
-    const { coveredItems } = calculatePlatformPotential(platformId, watchlist, contentState);
-    let totalMinutes = 0;
-    for (const item of coveredItems) {
-      const state = contentState.get(item.id);
-      if (state) totalMinutes += state.remainingMinutes;
-    }
+    const hasSelectedPlatform = providers.some(p => availablePlatformIds.has(p));
+    if (!hasSelectedPlatform) continue;
     
-    platformStats.set(platformId, {
-      coveredItems,
-      totalMinutes,
-      cost: getPlatformPrice(platformId),
-      wasPreviouslyUsed: previousPlatforms.has(platformId),
-    });
-  }
-
-  // Greedy selection with secondary optimization rules
-  const selectedPlatformIds = new Set<string>();
-  const coveredItemIds = new Set<string>();
-  let currentCost = 0;
-
-  // Rule 1: Prefer platforms from previous month (minimize switches)
-  // Rule 2: Among those, prefer lowest cost
-  // Rule 3 & 4: Will be handled in scheduling phase
-
-  // Sort platforms by: 
-  // 1. Previously used (minimize switches)
-  // 2. Coverage (more content = fewer platforms needed)
-  // 3. Cost efficiency (coverage / cost)
-  const sortedPlatforms = Array.from(platformStats.entries())
-    .filter(([, stats]) => stats.coveredItems.length > 0)
-    .sort((a, b) => {
-      const [, statsA] = a;
-      const [, statsB] = b;
-      
-      // Rule 1: Previously used platforms first
-      if (statsA.wasPreviouslyUsed && !statsB.wasPreviouslyUsed) return -1;
-      if (!statsA.wasPreviouslyUsed && statsB.wasPreviouslyUsed) return 1;
-      
-      // Rule 2: Higher coverage first (minimize total platforms needed)
-      const coverageA = statsA.totalMinutes;
-      const coverageB = statsB.totalMinutes;
-      if (coverageA !== coverageB) return coverageB - coverageA;
-      
-      // Rule 2 continued: Lower cost
-      return statsA.cost - statsB.cost;
-    });
-
-  // Select platforms greedily until all content is covered or budget exceeded
-  for (const [platformId, stats] of sortedPlatforms) {
-    // Check if this platform covers any uncovered content
-    const newlyCovered = stats.coveredItems.filter(item => !coveredItemIds.has(item.id));
-    if (newlyCovered.length === 0) continue;
-
-    // Check budget constraint
-    if (currentCost + stats.cost > userBudget) continue;
-
-    selectedPlatformIds.add(platformId);
-    currentCost += stats.cost;
-    newlyCovered.forEach(item => coveredItemIds.add(item.id));
-
-    // Check if all content is covered
-    const allCovered = remainingContent.every(item => coveredItemIds.has(item.id));
-    if (allCovered) break;
-  }
-
-  // Build OptimizedService array
-  const selectedPlatforms: OptimizedService[] = [];
-  
-  for (const serviceId of selectedPlatformIds) {
-    const { potentialHours, coveredItems } = calculatePlatformPotential(
-      serviceId,
-      watchlist,
-      contentState
-    );
-    
-    const cost = getPlatformPrice(serviceId);
-    const { name, color } = getPlatformInfo(serviceId);
-    
-    selectedPlatforms.push({
-      service: serviceId,
-      serviceName: name,
-      cost,
-      itemsToWatch: coveredItems,
-      valueDensity: potentialHours / cost,
-      color,
-      watchTime: Math.min(potentialHours, MONTHLY_WATCH_LIMIT),
-    });
-  }
-
-  // Sort by coverage (more items first)
-  selectedPlatforms.sort((a, b) => b.itemsToWatch.length - a.itemsToWatch.length);
-
-  return selectedPlatforms;
-}
-
-// ------------------------------
-// FUNCTION: Priority-Driven Platform Selection
-// ------------------------------
-function selectPlatformsForMonth(
-  watchlist: WatchlistItem[],
-  contentState: Map<string, ContentState>,
-  userBudget: number,
-  previousPlatforms: Set<string> = new Set()
-): OptimizedService[] {
-  // Check for degenerate priority state (all same priority)
-  if (isUniformPriority(watchlist, contentState)) {
-    return selectPlatformsUniformPriority(watchlist, contentState, userBudget, previousPlatforms);
-  }
-
-  const selectedPlatformIds = new Set<string>();
-  
-  // PRIORITY-FIRST: Process content by priority level (HIGH → MEDIUM → LOW)
-  const priorityLevels = ["high", "medium", "low"];
-  
-  for (const priority of priorityLevels) {
-    // Get remaining content at this priority level (only schedulable items)
-    const contentAtPriority = watchlist.filter(item => {
-      if (!shouldScheduleItem(item)) return false;
-      const state = contentState.get(item.id);
-      return item.priority === priority && state && state.remainingMinutes > 0;
-    });
-    
-    if (contentAtPriority.length === 0) continue;
-    
-    // For each content item at this priority, ensure its platform is selected
-    for (const item of contentAtPriority) {
-      const effectiveProviders = getEffectiveProviders(item);
-      
-      // Find the cheapest platform that hosts this item (among its providers)
-      let bestPlatform: string | null = null;
-      let bestCost = Infinity;
-      
-      for (const provider of effectiveProviders) {
-        // Prefer already-selected platforms (no extra cost)
-        if (selectedPlatformIds.has(provider)) {
-          bestPlatform = provider;
-          bestCost = 0;
-          break;
-        }
-        
-        const cost = getPlatformPrice(provider);
-        if (cost < bestCost) {
-          bestCost = cost;
-          bestPlatform = provider;
-        }
-      }
-      
-      // Add the platform if not already selected and fits budget
-      if (bestPlatform && !selectedPlatformIds.has(bestPlatform)) {
-        const currentCost = Array.from(selectedPlatformIds).reduce(
-          (sum, id) => sum + getPlatformPrice(id), 0
-        );
-        const platformCost = getPlatformPrice(bestPlatform);
-        
-        // For HIGH priority: FORCE inclusion even if over budget (priority > cost)
-        // For MEDIUM/LOW: respect budget constraint
-        if (priority === "high" || currentCost + platformCost <= userBudget) {
-          selectedPlatformIds.add(bestPlatform);
-        }
-      }
-    }
+    candidateItems.push(state);
+    addedIds.add(item.id);
   }
   
-  // Build OptimizedService array from selected platforms
-  const selectedPlatforms: OptimizedService[] = [];
-  
-  for (const serviceId of selectedPlatformIds) {
-    const { potentialHours, coveredItems } = calculatePlatformPotential(
-      serviceId,
-      watchlist,
-      contentState
-    );
-    
-    const cost = getPlatformPrice(serviceId);
-    const { name, color } = getPlatformInfo(serviceId);
-    
-    selectedPlatforms.push({
-      service: serviceId,
-      serviceName: name,
-      cost,
-      itemsToWatch: coveredItems,
-      valueDensity: potentialHours / cost,
-      color,
-      watchTime: Math.min(potentialHours, MONTHLY_WATCH_LIMIT),
-    });
-  }
-  
-  // Sort by priority of content they cover (platforms with HIGH priority content first)
-  selectedPlatforms.sort((a, b) => {
-    const aHasHigh = a.itemsToWatch.some(i => i.priority === "high");
-    const bHasHigh = b.itemsToWatch.some(i => i.priority === "high");
-    if (aHasHigh && !bHasHigh) return -1;
-    if (!aHasHigh && bHasHigh) return 1;
-    return 0;
-  });
-  
-  return selectedPlatforms;
-}
-
-// ------------------------------
-// FUNCTION: Schedule Content for Month (Fair/Proportional within Priority Buckets)
-// ------------------------------
-function scheduleContentForMonth(
-  selectedPlatforms: OptimizedService[],
-  contentState: Map<string, ContentState>,
-  monthStart: Date
-): { scheduledItems: ScheduledItem[]; totalWatchedHours: number } {
-  // Get all candidate content from selected platforms
-  const candidateContent: ContentState[] = [];
-  const addedIds = new Set<string>();
-  
-  for (const platform of selectedPlatforms) {
-    for (const item of platform.itemsToWatch) {
-      const state = contentState.get(item.id);
-      if (state && state.remainingMinutes > 0 && !addedIds.has(item.id)) {
-        candidateContent.push(state);
-        addedIds.add(item.id);
-      }
-    }
-  }
-  
-  // Group content by priority buckets
-  const priorityBuckets: Record<string, ContentState[]> = {
-    high: [],
-    medium: [],
-    low: [],
-  };
-  
-  for (const state of candidateContent) {
+  // Group by priority
+  const buckets: Record<string, ContentState[]> = { high: [], medium: [], low: [] };
+  for (const state of candidateItems) {
     const priority = state.item.priority || "low";
-    priorityBuckets[priority].push(state);
-  }
-  
-  // Within each bucket, sort: 
-  // 1. Movies before Series (movies need single sitting)
-  // 2. For uniform priority (tie-breaker): longest-content-first (Rule 4)
-  for (const priority of Object.keys(priorityBuckets)) {
-    priorityBuckets[priority].sort((a, b) => {
-      // Movies before series
-      if (a.item.type === "movie" && b.item.type !== "movie") return -1;
-      if (a.item.type !== "movie" && b.item.type === "movie") return 1;
-      // Tie-breaker: longest remaining content first (Rule 4)
-      return b.remainingMinutes - a.remainingMinutes;
-    });
+    buckets[priority].push(state);
   }
   
   const scheduledItems: ScheduledItem[] = [];
-  let remainingTimeHours = MONTHLY_WATCH_LIMIT;
+  let remainingCapacityMinutes = MONTHLY_WATCH_LIMIT * 60;
   let currentDay = 1;
-  let dailyRemainingHours = DAILY_WATCH_HOURS;
   
-  // Track scheduled hours per item for this month
-  const scheduledHoursThisMonth = new Map<string, number>();
-  
-  // Process priority buckets in order: HIGH → MEDIUM → LOW
-  const priorityOrder = ["high", "medium", "low"];
-  
-  for (const priority of priorityOrder) {
-    const bucket = priorityBuckets[priority];
+  // Process priority buckets in order
+  for (const priority of PRIORITY_ORDER) {
+    const bucket = buckets[priority];
     if (bucket.length === 0) continue;
-    if (remainingTimeHours <= 0) break;
+    if (remainingCapacityMinutes <= 0) break;
     
     // Separate movies and series
-    const movies = bucket.filter(s => s.item.type === "movie");
-    const series = bucket.filter(s => s.item.type !== "movie");
+    const movies = bucket.filter(s => s.item.type === "movie" && s.remainingMinutes > 0);
+    const series = bucket.filter(s => s.item.type !== "movie" && s.remainingMinutes > 0);
     
-    // FAIR ALLOCATION: Equal share for all items in this priority bucket
-    // Movies get scheduled first only if they fit within their fair share
-    const allActiveItems = bucket.filter(s => s.remainingMinutes > 0);
-    const itemCount = allActiveItems.length;
+    // STEP D: Movies first - must be watched in one sitting
+    for (const movieState of movies) {
+      if (remainingCapacityMinutes <= 0) break;
+      
+      const movieMinutes = movieState.remainingMinutes;
+      
+      // Movie must fit entirely in remaining capacity
+      if (movieMinutes <= remainingCapacityMinutes) {
+        const startDate = new Date(monthStart);
+        startDate.setDate(startDate.getDate() + currentDay - 1);
+        
+        scheduledItems.push({
+          ...movieState.item,
+          day: currentDay,
+          estimatedStartDate: new Date(startDate),
+          estimatedEndDate: new Date(startDate),
+          watchHours: movieMinutes / 60,
+          remainingMinutes: 0,
+        });
+        
+        movieState.remainingMinutes = 0;
+        remainingCapacityMinutes -= movieMinutes;
+        currentDay += 1;
+      }
+      // Movies that don't fit are pushed to next month automatically
+    }
     
-    if (itemCount === 0) continue;
+    // STEP C: Series with FAIR allocation
+    const activeSeries = series.filter(s => s.remainingMinutes > 0);
+    if (activeSeries.length === 0 || remainingCapacityMinutes <= 0) continue;
     
-    // Calculate equal share per item (INTRA-MONTH FAIRNESS)
-    const availableMinutes = remainingTimeHours * 60;
-    const equalShareMinutes = Math.floor(availableMinutes / itemCount);
+    // Calculate FAIR share: 60h / |R| per item
+    const equalShareMinutes = Math.floor(remainingCapacityMinutes / activeSeries.length);
     
-    // Track allocations for redistribution
+    // Track allocations and surplus
     const allocations = new Map<string, number>();
     let surplusMinutes = 0;
     
-    // First pass: allocate equal shares, track surplus from items that finish early
-    for (const state of allActiveItems) {
-      const neededMinutes = state.remainingMinutes;
-      const allocated = Math.min(neededMinutes, equalShareMinutes);
+    // First pass: allocate equal shares
+    for (const state of activeSeries) {
+      const needed = state.remainingMinutes;
+      const allocated = Math.min(needed, equalShareMinutes);
       allocations.set(state.item.id, allocated);
       
-      // If item needs less than equal share, track surplus
-      if (neededMinutes < equalShareMinutes) {
-        surplusMinutes += equalShareMinutes - neededMinutes;
+      // If item finishes early, track surplus for redistribution
+      if (needed < equalShareMinutes) {
+        surplusMinutes += equalShareMinutes - needed;
       }
     }
     
-    // Second pass: redistribute surplus to items that can use more
+    // Second pass: redistribute surplus to items that need more
     if (surplusMinutes > 0) {
-      const needsMore = allActiveItems.filter(s => {
+      const needsMore = activeSeries.filter(s => {
         const alloc = allocations.get(s.item.id) || 0;
         return s.remainingMinutes > alloc;
       });
@@ -546,9 +407,9 @@ function scheduleContentForMonth(
       while (surplusMinutes > 0 && needsMore.length > 0) {
         const extraPerItem = Math.floor(surplusMinutes / needsMore.length);
         if (extraPerItem === 0) {
-          // Distribute remaining 1 minute at a time
-          for (const state of needsMore) {
-            if (surplusMinutes <= 0) break;
+          // Distribute 1 minute at a time for remainder
+          for (let i = 0; i < needsMore.length && surplusMinutes > 0; i++) {
+            const state = needsMore[i];
             const currentAlloc = allocations.get(state.item.id) || 0;
             const canUse = state.remainingMinutes - currentAlloc;
             if (canUse > 0) {
@@ -574,7 +435,7 @@ function scheduleContentForMonth(
         
         // Update needsMore list
         needsMore.length = 0;
-        for (const state of allActiveItems) {
+        for (const state of activeSeries) {
           const alloc = allocations.get(state.item.id) || 0;
           if (state.remainingMinutes > alloc) {
             needsMore.push(state);
@@ -583,141 +444,70 @@ function scheduleContentForMonth(
       }
     }
     
-    // Schedule movies first (single sitting requirement)
-    // But only if their full duration fits within their allocation
-    for (const state of movies) {
-      if (remainingTimeHours <= 0) break;
-      
-      const movieEffHours = state.remainingMinutes / 60;
-      const allocatedMinutes = allocations.get(state.item.id) || 0;
-      
-      // Movie must fit entirely within allocation (can't partially watch a movie)
-      if (state.remainingMinutes <= allocatedMinutes && movieEffHours <= remainingTimeHours) {
-        const startDate = new Date(monthStart);
-        startDate.setDate(startDate.getDate() + currentDay - 1);
-        
-        scheduledItems.push({
-          ...state.item,
-          day: currentDay,
-          estimatedStartDate: new Date(startDate),
-          estimatedEndDate: new Date(startDate),
-          watchHours: movieEffHours,
-        });
-        
-        state.remainingMinutes = 0;
-        remainingTimeHours -= movieEffHours;
-        scheduledHoursThisMonth.set(state.item.id, movieEffHours);
-        
-        currentDay += 1;
-        dailyRemainingHours = DAILY_WATCH_HOURS;
-      }
-      // Movies that don't fit will be scheduled next month
-    }
-    
-    // Schedule series with their fair allocated time
-    const activeSeries = series.filter(s => s.remainingMinutes > 0);
-    
+    // Schedule series with their allocated time
     for (const state of activeSeries) {
       const allocatedMinutes = allocations.get(state.item.id) || 0;
-      if (allocatedMinutes <= 0 || remainingTimeHours <= 0) continue;
+      if (allocatedMinutes <= 0) continue;
       
       const startDay = currentDay;
       const startDate = new Date(monthStart);
       startDate.setDate(startDate.getDate() + startDay - 1);
       
-      // Simulate day-by-day watching
-      let watchedMinutes = 0;
-      const episodeDuration = state.rawMinutes / (state.item.episodeCount || 10);
-      const effEpisodeDuration = episodeDuration * (PRIORITY_WEIGHT[state.item.priority] ?? PRIORITY_WEIGHT.low);
-      
-      while (watchedMinutes < allocatedMinutes && currentDay <= DAYS_IN_MONTH) {
-        const episodeHours = effEpisodeDuration / 60;
-        
-        if (dailyRemainingHours < episodeHours && dailyRemainingHours < 0.5) {
-          currentDay += 1;
-          dailyRemainingHours = DAILY_WATCH_HOURS;
-        }
-        
-        const canWatch = Math.min(dailyRemainingHours * 60, allocatedMinutes - watchedMinutes);
-        watchedMinutes += canWatch;
-        dailyRemainingHours -= canWatch / 60;
-        
-        if (dailyRemainingHours <= 0) {
-          currentDay += 1;
-          dailyRemainingHours = DAILY_WATCH_HOURS;
-        }
-      }
+      // Calculate end day based on daily watch capacity
+      const daysNeeded = Math.ceil(allocatedMinutes / (DAILY_WATCH_HOURS * 60));
+      const endDay = Math.min(startDay + daysNeeded - 1, DAYS_IN_MONTH);
       
       const endDate = new Date(monthStart);
-      endDate.setDate(endDate.getDate() + Math.max(currentDay - 1, startDay));
+      endDate.setDate(endDate.getDate() + endDay - 1);
       
-      const watchedHours = allocatedMinutes / 60;
+      const watchHours = allocatedMinutes / 60;
+      const newRemaining = state.remainingMinutes - allocatedMinutes;
       
       scheduledItems.push({
         ...state.item,
         day: startDay,
         estimatedStartDate: new Date(startDate),
         estimatedEndDate: new Date(endDate),
-        watchHours: watchedHours,
-        remainingMinutes: state.remainingMinutes - allocatedMinutes,
+        watchHours,
+        remainingMinutes: newRemaining,
       });
       
-      state.remainingMinutes -= allocatedMinutes;
-      remainingTimeHours -= watchedHours;
-      scheduledHoursThisMonth.set(
-        state.item.id,
-        (scheduledHoursThisMonth.get(state.item.id) || 0) + watchedHours
-      );
+      // Update content state
+      state.remainingMinutes = newRemaining;
+      remainingCapacityMinutes -= allocatedMinutes;
     }
+    
+    // Move current day forward
+    currentDay = Math.min(currentDay + Math.ceil(activeSeries.length / 2), DAYS_IN_MONTH);
   }
   
-  // DISPLAY ORDER: Sort scheduled items deterministically for consistent display
-  // This does NOT affect scheduling logic, only the order items appear in the UI
-  const priorityRank: Record<string, number> = { high: 0, medium: 1, low: 2 };
+  // STEP E: Lower priority fill already handled by processing all buckets
   
-  scheduledItems.sort((a, b) => {
-    // 1. Priority (high > medium > low)
-    const priorityA = priorityRank[a.priority] ?? 2;
-    const priorityB = priorityRank[b.priority] ?? 2;
-    if (priorityA !== priorityB) return priorityA - priorityB;
-    
-    // 2. Larger remaining effective watch time first
-    const remainingA = a.remainingMinutes ?? 0;
-    const remainingB = b.remainingMinutes ?? 0;
-    if (remainingA !== remainingB) return remainingB - remainingA;
-    
-    // 3. Item that completes earlier first
-    const endA = a.estimatedEndDate.getTime();
-    const endB = b.estimatedEndDate.getTime();
-    if (endA !== endB) return endA - endB;
-    
-    // 4. Stable deterministic fallback: alphabetical by title
-    return a.title.localeCompare(b.title);
-  });
-
-  const totalWatchedHours = MONTHLY_WATCH_LIMIT - remainingTimeHours;
+  const totalWatchedHours = (MONTHLY_WATCH_LIMIT * 60 - remainingCapacityMinutes) / 60;
   return { scheduledItems, totalWatchedHours };
 }
 
-// ------------------------------
+// ============================================
 // MAIN OPTIMIZATION FUNCTION
-// ------------------------------
+// ============================================
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 export function optimizeSubscriptions(
   watchlist: WatchlistItem[],
   budget: number
 ): OptimizationResult {
-  // Preprocess: calculate effective minutes for each item
-  const contentState = preprocessContent(watchlist);
+  // Initialize with REAL watch times only
+  const contentState = initializeContentState(watchlist);
   
-  // Calculate total effective minutes to determine max horizon
-  let totalEffMinutes = 0;
+  // Calculate max months needed (real hours / 60h per month)
+  let totalRealMinutes = 0;
   contentState.forEach(state => {
-    totalEffMinutes += state.effMinutes;
+    if (shouldScheduleItem(state.item)) {
+      totalRealMinutes += state.realMinutes;
+    }
   });
   
-  const M_max = Math.ceil(totalEffMinutes / (MONTHLY_WATCH_LIMIT * 60)) + 3;
+  const M_max = Math.ceil(totalRealMinutes / (MONTHLY_WATCH_LIMIT * 60)) + 3;
   
   const currentDate = new Date();
   const currentMonth = currentDate.getMonth();
@@ -725,38 +515,37 @@ export function optimizeSubscriptions(
   
   const rotationSchedule: MonthlyPlan[] = [];
   let monthOffset = 0;
-  
-  // Track previous month's platforms for minimizing switches
   let previousPlatforms = new Set<string>();
-
+  
   // Month-by-month simulation
   while (monthOffset < Math.min(M_max, 24)) {
-    // Check if there's remaining content
-    let hasRemainingContent = false;
-    contentState.forEach(state => {
-      if (state.remainingMinutes > 0) {
-        hasRemainingContent = true;
-      }
-    });
+    // STEP A: Find active priority bucket
+    const activeBucket = getActivePriorityBucket(watchlist, contentState);
     
-    if (!hasRemainingContent) break;
+    if (!activeBucket) break; // All content watched
     
-    // Step A & B: Select platforms for this month (pass previous platforms for switch minimization)
-    const selectedPlatforms = selectPlatformsForMonth(watchlist, contentState, budget, previousPlatforms);
+    // STEP B: Select platforms (mandatory for active bucket)
+    const selectedPlatforms = selectPlatformsForMonth(
+      activeBucket,
+      watchlist,
+      contentState,
+      budget,
+      previousPlatforms
+    );
     
     if (selectedPlatforms.length === 0) break;
     
-    // Update previous platforms for next iteration
     previousPlatforms = new Set(selectedPlatforms.map(p => p.service));
     
     const monthIdx = (currentMonth + monthOffset) % 12;
     const year = currentYear + Math.floor((currentMonth + monthOffset) / 12);
     const monthStart = new Date(year, monthIdx, 1);
     
-    // Step C: Schedule content for this month
+    // STEP C & D: Schedule content fairly
     const { scheduledItems, totalWatchedHours } = scheduleContentForMonth(
       selectedPlatforms,
       contentState,
+      watchlist,
       monthStart
     );
     
@@ -791,44 +580,36 @@ export function optimizeSubscriptions(
     monthOffset++;
   }
   
-  // Check for infeasible items (content that couldn't be scheduled)
+  // Build deferred items list
   const deferredItems: { item: WatchlistItem; reason: string }[] = [];
   
-  // First, add items with pending platform selection
-  watchlist.forEach(item => {
+  // Items with pending platform selection
+  for (const item of watchlist) {
     if (item.pendingPlatformSelection) {
       deferredItems.push({
         item,
         reason: "Pending platform selection - marked as 'decide later'.",
       });
     }
-  });
+  }
   
+  // Items that couldn't be scheduled
   contentState.forEach(state => {
-    // Skip items already in deferred (pending platform selection)
     if (deferredItems.some(d => d.item.id === state.item.id)) return;
     
     if (state.remainingMinutes > 0) {
-      const effectiveProviders = getEffectiveProviders(state.item);
+      const providers = getEffectiveProviders(state.item);
       
-      if (effectiveProviders.length === 0) {
+      if (providers.length === 0) {
         deferredItems.push({
           item: state.item,
           reason: "No streaming platform available. Please select a platform manually.",
         });
       } else {
-        const effHours = state.effMinutes / 60;
-        if (effHours > MONTHLY_WATCH_LIMIT) {
-          deferredItems.push({
-            item: state.item,
-            reason: `Content requires ${effHours.toFixed(1)} hours (exceeds monthly capacity of ${MONTHLY_WATCH_LIMIT}h). Consider increasing daily watch hours.`,
-          });
-        } else {
-          deferredItems.push({
-            item: state.item,
-            reason: "Could not fit within budget constraints. Consider increasing budget.",
-          });
-        }
+        deferredItems.push({
+          item: state.item,
+          reason: "Could not fit within budget constraints. Consider increasing budget.",
+        });
       }
     }
   });
@@ -840,12 +621,12 @@ export function optimizeSubscriptions(
   
   const firstMonthServices = rotationSchedule[0]?.services || [];
   
-  // Calculate coverage
+  // Coverage calculation
   const totalItems = watchlist.length;
   const watchedItems = totalItems - deferredItems.length;
   const coveragePercent = totalItems > 0 ? Math.round((watchedItems / totalItems) * 100) : 0;
   
-  // Calculate savings vs subscribing to all services
+  // Savings vs subscribing to all services
   const allServicesCost = Object.values(PLATFORM_PRICES).reduce((sum, price) => sum + price, 0);
   const estimatedSavings = (allServicesCost * totalMonthsNeeded) - totalRotationCost;
   
@@ -900,9 +681,9 @@ function generateExplanation(
   return explanation;
 }
 
-// ------------------------------
-// HELPER: Check if watchlist is ready for optimization
-// ------------------------------
+// ============================================
+// WATCHLIST READINESS CHECK
+// ============================================
 export interface WatchlistReadiness {
   isReady: boolean;
   highPriorityMissingPlatform: WatchlistItem[];
@@ -916,13 +697,11 @@ export function checkWatchlistReadiness(watchlist: WatchlistItem[]): WatchlistRe
   const pendingPlatformSelection: WatchlistItem[] = [];
   
   for (const item of watchlist) {
-    // Items explicitly marked as "decide later"
     if (item.pendingPlatformSelection) {
       pendingPlatformSelection.push(item);
       continue;
     }
     
-    // Items with no provider (TMDB or user-selected)
     const hasProvider = item.providers.length > 0 || !!item.userSelectedProvider;
     if (!hasProvider) {
       if (item.priority === "high") {
@@ -933,7 +712,6 @@ export function checkWatchlistReadiness(watchlist: WatchlistItem[]): WatchlistRe
     }
   }
   
-  // Ready if no HIGH-priority items are missing platforms
   const isReady = highPriorityMissingPlatform.length === 0;
   
   return {
