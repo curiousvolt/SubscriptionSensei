@@ -14,8 +14,8 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ['IBM Plex Sans', 'sans-serif'],
-        display: ['Sora', 'sans-serif'],
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+        display: ['Plus Jakarta Sans', 'system-ui', 'sans-serif'],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -59,6 +59,10 @@ export default {
           DEFAULT: "hsl(var(--warning))",
           foreground: "hsl(var(--warning-foreground))",
         },
+        // Priority colors
+        "priority-high": "hsl(var(--priority-high))",
+        "priority-medium": "hsl(var(--priority-medium))",
+        "priority-low": "hsl(var(--priority-low))",
         // Streaming service brand colors
         netflix: "hsl(var(--netflix))",
         disney: "hsl(var(--disney))",
@@ -83,6 +87,8 @@ export default {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+        xl: "calc(var(--radius) + 4px)",
+        "2xl": "calc(var(--radius) + 8px)",
       },
       keyframes: {
         "accordion-down": {
@@ -114,6 +120,12 @@ export default {
         "glow-primary": "var(--glow-primary)",
         "glow-accent": "var(--glow-accent)",
         "glow-success": "var(--glow-success)",
+        "elevated": "0 4px 24px hsl(0 0% 0% / 0.2)",
+        "card": "0 1px 3px hsl(0 0% 0% / 0.1), 0 4px 12px hsl(0 0% 0% / 0.1)",
+      },
+      spacing: {
+        "18": "4.5rem",
+        "22": "5.5rem",
       },
     },
   },

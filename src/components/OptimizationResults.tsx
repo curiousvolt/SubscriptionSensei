@@ -7,6 +7,7 @@ import {
   ChevronUp,
   Info,
   Check,
+  Layers,
 } from "lucide-react";
 import { OptimizationResult, OptimizedService } from "@/lib/optimizer";
 import { STREAMING_SERVICES } from "@/data/services";
@@ -20,11 +21,6 @@ export function OptimizationResults({ result }: OptimizationResultsProps) {
   const [expandedService, setExpandedService] = useState<string | null>(null);
   const [showExplanation, setShowExplanation] = useState(false);
 
-  const getServiceColor = (serviceId: string) => {
-    const service = STREAMING_SERVICES.find((s) => s.id === serviceId);
-    return service?.color || "primary";
-  };
-
   const getServiceLogo = (serviceId: string) => {
     const service = STREAMING_SERVICES.find((s) => s.id === serviceId);
     return service?.logo || "📺";
@@ -32,44 +28,47 @@ export function OptimizationResults({ result }: OptimizationResultsProps) {
 
   return (
     <div className="space-y-6 animate-slide-up">
-      {/* Hero Metrics */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      {/* Hero Metrics - Refined */}
+      <div className="grid grid-cols-4 gap-3">
         <MetricCard
-          icon={<TrendingDown className="w-5 h-5 text-success" />}
-          label="Monthly Savings"
-          value={`$${result.estimatedSavings.toFixed(2)}`}
-          highlight
+          icon={<TrendingDown className="w-4 h-4" />}
+          label="Savings"
+          value={`$${result.estimatedSavings.toFixed(0)}`}
+          variant="success"
         />
         <MetricCard
-          icon={<Tv className="w-5 h-5 text-primary" />}
+          icon={<Tv className="w-4 h-4" />}
           label="Coverage"
           value={`${result.coveragePercent}%`}
+          variant="default"
         />
         <MetricCard
-          icon={<Check className="w-5 h-5 text-primary" />}
+          icon={<Layers className="w-4 h-4" />}
           label="Services"
           value={result.subscribeThisMonth.length.toString()}
+          variant="default"
         />
         <MetricCard
-          icon={<Clock className="w-5 h-5 text-warning" />}
-          label="Total Cost"
-          value={`$${result.totalCost.toFixed(2)}`}
+          icon={<Clock className="w-4 h-4" />}
+          label="Cost"
+          value={`$${result.totalCost.toFixed(0)}`}
+          variant="muted"
         />
       </div>
 
       {/* Subscribe This Month */}
       <div className="space-y-3">
-        <h3 className="font-display text-lg font-semibold flex items-center gap-2">
-          <span className="text-2xl">📺</span> Subscribe This Month
+        <h3 className="text-sm font-medium text-muted-foreground tracking-wide uppercase">
+          This Month
         </h3>
 
         {result.subscribeThisMonth.length === 0 ? (
-          <div className="glass rounded-xl p-6 text-center text-muted-foreground">
+          <div className="surface-elevated rounded-xl p-6 text-center text-muted-foreground">
             <p>No services fit within your budget.</p>
             <p className="text-sm mt-1">Try increasing your budget.</p>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2">
             {result.subscribeThisMonth.map((service, index) => (
               <ServiceCard
                 key={service.service}
@@ -91,33 +90,31 @@ export function OptimizationResults({ result }: OptimizationResultsProps) {
       {/* Deferred Items */}
       {result.deferredItems.length > 0 && (
         <div className="space-y-3">
-          <h3 className="font-display text-lg font-semibold flex items-center gap-2">
-            <span className="text-2xl">⏭️</span> Parking Lot (Defer)
+          <h3 className="text-sm font-medium text-muted-foreground tracking-wide uppercase">
+            Deferred
           </h3>
 
-          <div className="glass rounded-xl p-4 space-y-2">
+          <div className="surface-elevated rounded-xl divide-y divide-border/50">
             {result.deferredItems.map(({ item, reason }) => (
               <div
                 key={item.id}
-                className="flex items-start gap-3 py-2 border-b border-border/50 last:border-0"
+                className="flex items-center gap-3 p-3 first:rounded-t-xl last:rounded-b-xl"
               >
-                <div className="flex-1">
-                  <p className="font-medium text-sm">{item.title}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
+                {/* Priority Dot */}
+                <div 
+                  className={cn(
+                    "priority-dot",
+                    item.priority === "high" && "priority-dot-high",
+                    item.priority === "medium" && "priority-dot-medium",
+                    item.priority === "low" && "priority-dot-low"
+                  )}
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-sm truncate">{item.title}</p>
+                  <p className="text-xs text-muted-foreground truncate">
                     {reason}
                   </p>
                 </div>
-                <span
-                  className={cn(
-                    "text-xs px-2 py-0.5 rounded capitalize",
-                    item.priority === "high" &&
-                      "bg-destructive/20 text-destructive",
-                    item.priority === "medium" && "bg-warning/20 text-warning",
-                    item.priority === "low" && "bg-muted text-muted-foreground"
-                  )}
-                >
-                  {item.priority}
-                </span>
               </div>
             ))}
           </div>
@@ -125,22 +122,22 @@ export function OptimizationResults({ result }: OptimizationResultsProps) {
       )}
 
       {/* AI Explanation */}
-      <div className="space-y-2">
+      <div>
         <button
           onClick={() => setShowExplanation(!showExplanation)}
-          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors duration-150"
         >
-          <Info className="w-4 h-4" />
-          <span>Why This Plan?</span>
+          <Info className="w-3.5 h-3.5" />
+          <span>Why this plan?</span>
           {showExplanation ? (
-            <ChevronUp className="w-4 h-4" />
+            <ChevronUp className="w-3.5 h-3.5" />
           ) : (
-            <ChevronDown className="w-4 h-4" />
+            <ChevronDown className="w-3.5 h-3.5" />
           )}
         </button>
 
         {showExplanation && (
-          <div className="glass rounded-xl p-4 text-sm text-muted-foreground animate-slide-up">
+          <div className="mt-3 surface-elevated rounded-xl p-4 text-sm text-muted-foreground animate-fade-in">
             {result.explanation}
           </div>
         )}
@@ -153,30 +150,34 @@ function MetricCard({
   icon,
   label,
   value,
-  highlight = false,
+  variant = "default",
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
-  highlight?: boolean;
+  variant?: "default" | "success" | "muted";
 }) {
   return (
-    <div
-      className={cn(
-        "glass rounded-xl p-4 text-center",
-        highlight && "ring-1 ring-success/50 glow-success"
-      )}
-    >
-      <div className="flex justify-center mb-2">{icon}</div>
+    <div className="surface-elevated rounded-xl p-3 text-center">
+      <div className={cn(
+        "flex justify-center mb-1.5",
+        variant === "success" && "text-success",
+        variant === "muted" && "text-muted-foreground",
+        variant === "default" && "text-primary"
+      )}>
+        {icon}
+      </div>
       <p
         className={cn(
-          "font-display text-xl font-bold",
-          highlight && "text-success"
+          "font-display text-lg font-bold",
+          variant === "success" && "text-success",
+          variant === "muted" && "text-foreground",
+          variant === "default" && "text-foreground"
         )}
       >
         {value}
       </p>
-      <p className="text-xs text-muted-foreground mt-1">{label}</p>
+      <p className="text-[10px] text-muted-foreground mt-0.5 uppercase tracking-wide">{label}</p>
     </div>
   );
 }
@@ -196,47 +197,45 @@ function ServiceCard({
 }) {
   return (
     <div
-      className="glass rounded-xl overflow-hidden animate-slide-up"
-      style={{ animationDelay: `${index * 100}ms` }}
+      className="surface-elevated rounded-xl overflow-hidden animate-slide-up"
+      style={{ animationDelay: `${index * 60}ms` }}
     >
       <button
         onClick={onToggle}
-        className="w-full p-4 flex items-center gap-3 hover:bg-secondary/50 transition-colors"
+        className="w-full p-3.5 flex items-center gap-3 hover:bg-secondary/30 transition-colors duration-150"
       >
-        <span className="text-2xl">{logo}</span>
+        <span className="text-xl">{logo}</span>
         <div className="flex-1 text-left">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold">{service.serviceName}</span>
-            <span className="text-sm text-muted-foreground">
+          <div className="flex items-baseline gap-2">
+            <span className="font-semibold text-sm">{service.serviceName}</span>
+            <span className="text-xs text-muted-foreground">
               ${service.cost.toFixed(2)}/mo
             </span>
           </div>
           <p className="text-xs text-muted-foreground">
-            {service.itemsToWatch.length} items • Value density:{" "}
-            {service.valueDensity.toFixed(2)}
+            {service.itemsToWatch.length} items
           </p>
         </div>
         {isExpanded ? (
-          <ChevronUp className="w-5 h-5 text-muted-foreground" />
+          <ChevronUp className="w-4 h-4 text-muted-foreground" />
         ) : (
-          <ChevronDown className="w-5 h-5 text-muted-foreground" />
+          <ChevronDown className="w-4 h-4 text-muted-foreground" />
         )}
       </button>
 
       {isExpanded && (
-        <div className="px-4 pb-4 pt-2 border-t border-border/50 animate-slide-up">
-          <p className="text-xs text-muted-foreground mb-2">Items to watch:</p>
+        <div className="px-3.5 pb-3.5 pt-2 border-t border-border/30 animate-fade-in">
           <div className="space-y-1">
             {service.itemsToWatch.map((item) => (
               <div
                 key={item.id}
-                className="flex items-center gap-2 text-sm py-1"
+                className="flex items-center gap-2 text-sm py-1.5"
               >
-                <Check className="w-4 h-4 text-success" />
-                <span>{item.title}</span>
+                <Check className="w-3.5 h-3.5 text-success shrink-0" />
+                <span className="truncate">{item.title}</span>
                 {item.episodeCount && (
-                  <span className="text-xs text-muted-foreground">
-                    ({item.episodeCount} episodes)
+                  <span className="text-xs text-muted-foreground shrink-0">
+                    {item.episodeCount} eps
                   </span>
                 )}
               </div>
