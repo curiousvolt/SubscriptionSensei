@@ -10,13 +10,22 @@ export interface OptimizedService {
   color: string;
 }
 
+export interface ScheduledItem extends WatchlistItem {
+  estimatedStartDate: Date;
+  estimatedEndDate: Date;
+  watchHours: number;
+}
+
 export interface MonthlyPlan {
   month: string;
   monthIndex: number;
+  year: number;
   services: OptimizedService[];
-  itemsToWatch: WatchlistItem[];
+  itemsToWatch: ScheduledItem[];
   monthlyCost: number;
   action: "subscribe" | "rotate" | "keep" | "cancel";
+  totalWatchHours: number;
+  isBudgetConstrained: boolean;
 }
 
 export interface OptimizationResult {
@@ -75,12 +84,12 @@ function calculateValueDensity(
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-// Estimate how many months needed to watch all content on a service
-function estimateMonthsNeeded(items: WatchlistItem[]): number {
-  const totalHours = items.reduce((sum, item) => sum + getWatchTime(item), 0);
-  // Assume average viewing of 15 hours per month
-  const monthsNeeded = Math.ceil(totalHours / 15);
-  return Math.max(1, monthsNeeded);
+// Calculate watch time efficiency score for budget-constrained optimization
+function getWatchTimeEfficiency(item: WatchlistItem): number {
+  const hours = getWatchTime(item);
+  const priority = getPriorityValue(item.priority);
+  // Higher priority + shorter watch time = higher efficiency
+  return priority / hours;
 }
 
 export function optimizeSubscriptions(
@@ -88,6 +97,7 @@ export function optimizeSubscriptions(
   budget: number
 ): OptimizationResult {
   const allServicesCost = STREAMING_SERVICES.reduce((sum, s) => sum + s.price, 0);
+  const isBudgetConstrained = budget < allServicesCost * 0.5;
   
   // Calculate value density for each service
   const serviceAnalysis = STREAMING_SERVICES.map((service) => {
@@ -104,36 +114,29 @@ export function optimizeSubscriptions(
     .filter((s) => s.itemsToWatch.length > 0)
     .sort((a, b) => b.valueDensity - a.valueDensity);
 
-  // --- IMPROVED ROTATION ALGORITHM ---
-  // Goal: Watch all content by rotating services optimally
-  
-  const currentMonth = new Date().getMonth();
+  const currentDate = new Date();
+  const currentMonth = currentDate.getMonth();
+  const currentYear = currentDate.getFullYear();
   const rotationSchedule: MonthlyPlan[] = [];
   const watchedItems = new Set<string>();
-  const remainingItems = new Map<string, WatchlistItem[]>();
-  
-  // Initialize remaining items per service
-  serviceAnalysis.forEach(service => {
-    remainingItems.set(service.service, [...service.itemsToWatch]);
-  });
 
-  // Calculate optimal service order based on:
-  // 1. Priority of content
-  // 2. Unique content (not available elsewhere)
-  // 3. Cost efficiency
-  const getServiceScore = (service: OptimizedService, watchedIds: Set<string>): number => {
+  // Calculate optimal service order with budget awareness
+  const getServiceScore = (service: OptimizedService, watchedIds: Set<string>, constrained: boolean): number => {
     const unwatchedItems = service.itemsToWatch.filter(item => !watchedIds.has(item.id));
     if (unwatchedItems.length === 0) return -1;
     
-    // Score = (priority sum * uniqueness factor) / cost
-    const prioritySum = unwatchedItems.reduce((sum, item) => sum + getPriorityValue(item.priority), 0);
+    if (constrained) {
+      // Budget constrained: prioritize quick-to-watch, high-priority content
+      const efficiencyScore = unwatchedItems.reduce((sum, item) => sum + getWatchTimeEfficiency(item), 0);
+      return efficiencyScore / service.cost;
+    }
     
-    // Check for exclusive content
+    // Normal: priority sum * uniqueness factor / cost
+    const prioritySum = unwatchedItems.reduce((sum, item) => sum + getPriorityValue(item.priority), 0);
     const exclusiveCount = unwatchedItems.filter(item => 
       item.providers.length === 1 || 
       item.providers.every(p => p === service.service || !serviceAnalysis.find(s => s.service === p))
     ).length;
-    
     const uniquenessFactor = 1 + (exclusiveCount / unwatchedItems.length) * 0.5;
     
     return (prioritySum * uniquenessFactor) / service.cost;
@@ -141,17 +144,16 @@ export function optimizeSubscriptions(
 
   // Build rotation schedule
   let monthOffset = 0;
-  let activeServices: OptimizedService[] = [];
-  let monthlyBudget = budget;
+  const AVAILABLE_HOURS_PER_MONTH = 20; // Viewing hours available per month
 
   while (true) {
     const monthIdx = (currentMonth + monthOffset) % 12;
+    const year = currentYear + Math.floor((currentMonth + monthOffset) / 12);
     
-    // Get services with remaining unwatched content
     const availableServices = serviceAnalysis
       .map(s => ({
         ...s,
-        score: getServiceScore(s, watchedItems),
+        score: getServiceScore(s, watchedItems, isBudgetConstrained),
         unwatched: s.itemsToWatch.filter(item => !watchedItems.has(item.id))
       }))
       .filter(s => s.score > 0)
@@ -159,48 +161,82 @@ export function optimizeSubscriptions(
     
     if (availableServices.length === 0) break;
     
-    // Select services within budget, prioritizing by score
+    // Select services within budget
     const selectedServices: OptimizedService[] = [];
     let spent = 0;
     
     for (const service of availableServices) {
-      if (spent + service.cost <= monthlyBudget) {
+      if (spent + service.cost <= budget) {
         selectedServices.push(service);
         spent += service.cost;
       }
     }
     
     if (selectedServices.length === 0) {
-      // Budget too low - pick cheapest service with content
-      const cheapest = availableServices.sort((a, b) => a.cost - b.cost)[0];
-      if (cheapest) {
-        selectedServices.push(cheapest);
-        spent = cheapest.cost;
+      // Budget too low - pick single best value service
+      const bestValue = availableServices.sort((a, b) => {
+        // When budget constrained, prefer cheaper services with quick content
+        if (isBudgetConstrained) {
+          const aEfficiency = a.unwatched.reduce((sum, i) => sum + getWatchTimeEfficiency(i), 0) / a.cost;
+          const bEfficiency = b.unwatched.reduce((sum, i) => sum + getWatchTimeEfficiency(i), 0) / b.cost;
+          return bEfficiency - aEfficiency;
+        }
+        return a.cost - b.cost;
+      })[0];
+      if (bestValue) {
+        selectedServices.push(bestValue);
+        spent = bestValue.cost;
       }
     }
     
-    // Determine which items to watch this month
-    const itemsThisMonth: WatchlistItem[] = [];
+    // Schedule items with completion dates
+    const itemsThisMonth: ScheduledItem[] = [];
+    const monthStart = new Date(year, monthIdx, 1);
+    let dayOffset = 0;
+    let remainingHours = AVAILABLE_HOURS_PER_MONTH;
     
+    // Gather all unwatched items from selected services
+    let allUnwatchedItems: WatchlistItem[] = [];
     selectedServices.forEach(service => {
       const serviceItems = service.itemsToWatch.filter(item => !watchedItems.has(item.id));
-      
-      // Prioritize high priority items first
-      const sortedItems = serviceItems.sort((a, b) => 
-        getPriorityValue(b.priority) - getPriorityValue(a.priority)
-      );
-      
-      // Estimate how many items can be watched in a month
-      let monthHours = 15; // Available hours per month
-      for (const item of sortedItems) {
-        const itemHours = getWatchTime(item);
-        if (monthHours >= itemHours) {
-          itemsThisMonth.push(item);
-          watchedItems.add(item.id);
-          monthHours -= itemHours;
-        }
-      }
+      allUnwatchedItems.push(...serviceItems);
     });
+    
+    // Remove duplicates
+    allUnwatchedItems = allUnwatchedItems.filter((item, idx, arr) => 
+      arr.findIndex(i => i.id === item.id) === idx
+    );
+    
+    // Sort by efficiency when budget constrained, otherwise by priority
+    if (isBudgetConstrained) {
+      allUnwatchedItems.sort((a, b) => getWatchTimeEfficiency(b) - getWatchTimeEfficiency(a));
+    } else {
+      allUnwatchedItems.sort((a, b) => getPriorityValue(b.priority) - getPriorityValue(a.priority));
+    }
+    
+    for (const item of allUnwatchedItems) {
+      const itemHours = getWatchTime(item);
+      if (remainingHours >= itemHours) {
+        const startDate = new Date(monthStart);
+        startDate.setDate(startDate.getDate() + dayOffset);
+        
+        // Calculate days needed (assuming ~1.5 hours viewing per day)
+        const daysNeeded = Math.ceil(itemHours / 1.5);
+        const endDate = new Date(startDate);
+        endDate.setDate(endDate.getDate() + daysNeeded);
+        
+        itemsThisMonth.push({
+          ...item,
+          estimatedStartDate: startDate,
+          estimatedEndDate: endDate,
+          watchHours: itemHours,
+        });
+        
+        watchedItems.add(item.id);
+        remainingHours -= itemHours;
+        dayOffset += daysNeeded + 1; // Add buffer day between items
+      }
+    }
     
     // Determine action type
     let action: "subscribe" | "rotate" | "keep" | "cancel" = "subscribe";
@@ -211,26 +247,24 @@ export function optimizeSubscriptions(
       
       const sameServices = selectedServices.every(s => prevIds.has(s.service)) && 
                           previousServices.every(s => currIds.has(s.service));
-      
-      if (sameServices) {
-        action = "keep";
-      } else {
-        action = "rotate";
-      }
+      action = sameServices ? "keep" : "rotate";
     }
+    
+    const totalWatchHours = itemsThisMonth.reduce((sum, i) => sum + i.watchHours, 0);
     
     rotationSchedule.push({
       month: MONTHS[monthIdx],
       monthIndex: monthIdx,
+      year,
       services: selectedServices,
       itemsToWatch: itemsThisMonth,
       monthlyCost: spent,
       action,
+      totalWatchHours,
+      isBudgetConstrained,
     });
     
     monthOffset++;
-    
-    // Safety limit
     if (monthOffset > 24) break;
   }
 
