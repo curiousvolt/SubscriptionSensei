@@ -7,6 +7,8 @@ export interface WatchlistItem {
   poster?: string;
   year?: number;
   episodeCount?: number;
+  seasonCount?: number;
+  totalWatchTimeMinutes?: number; // Total watch time in minutes from TMDB
 }
 
 export const SAMPLE_WATCHLIST: WatchlistItem[] = [

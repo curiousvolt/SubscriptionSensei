@@ -62,8 +62,14 @@ export interface OptimizationResult {
 // HELPER: Get Watch Time (in hours)
 // ------------------------------
 function getWatchTime(item: WatchlistItem): number {
+  // Use actual watch time from TMDB if available
+  if (item.totalWatchTimeMinutes) {
+    return item.totalWatchTimeMinutes / 60; // Convert minutes to hours
+  }
+
+  // Fallback calculations if TMDB data is missing
   if (item.type === "movie") {
-    return 2; // Average movie ~2 hours
+    return 2; // Default movie ~2 hours
   } else {
     // TV series: estimate based on episode count
     const episodes = item.episodeCount || 10;

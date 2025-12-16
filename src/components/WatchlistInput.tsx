@@ -24,6 +24,9 @@ interface TMDBResult {
     name: string;
     logo: string;
   }>;
+  episodeCount?: number;
+  seasonCount?: number;
+  totalWatchTimeMinutes?: number;
 }
 
 export function WatchlistInput({ watchlist, setWatchlist }: WatchlistInputProps) {
@@ -109,6 +112,9 @@ export function WatchlistInput({ watchlist, setWatchlist }: WatchlistInputProps)
       providers: mappedProviders,
       poster: result.poster || undefined,
       year: parseInt(result.year) || undefined,
+      episodeCount: result.episodeCount,
+      seasonCount: result.seasonCount,
+      totalWatchTimeMinutes: result.totalWatchTimeMinutes,
     };
 
     setWatchlist([...watchlist, newItem]);
