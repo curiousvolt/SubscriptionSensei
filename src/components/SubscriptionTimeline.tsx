@@ -1,4 +1,4 @@
-import { Calendar, ChevronRight, DollarSign, Film, Tv, Clock, AlertTriangle } from "lucide-react";
+import { Calendar, ChevronRight, Film, Tv, Clock, AlertTriangle } from "lucide-react";
 import { OptimizationResult, MonthlyPlan, ScheduledItem } from "@/lib/optimizer";
 import { STREAMING_SERVICES } from "@/data/services";
 import { cn } from "@/lib/utils";
@@ -43,28 +43,6 @@ export function SubscriptionTimeline({ result }: SubscriptionTimelineProps) {
 
   return (
     <div className="space-y-6 animate-slide-up">
-      {/* Pricing Overview - Separate Section */}
-      <div className="glass rounded-xl p-5 border border-border/50">
-        <h3 className="font-display text-lg font-semibold mb-4 flex items-center gap-2">
-          <DollarSign className="w-5 h-5 text-primary" />
-          Service Pricing Overview
-        </h3>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {STREAMING_SERVICES.map((service) => (
-            <div
-              key={service.id}
-              className="flex items-center gap-3 bg-secondary/30 rounded-lg px-4 py-3 hover:bg-secondary/50 transition-colors"
-            >
-              <span className="text-2xl">{service.logo}</span>
-              <div className="flex flex-col">
-                <span className="text-sm font-semibold">{service.name}</span>
-                <span className="text-lg font-bold text-primary">${service.price.toFixed(2)}<span className="text-xs text-muted-foreground">/mo</span></span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
       {/* Budget Warning */}
       {isBudgetConstrained && (
         <div className="glass rounded-xl p-4 border border-warning/50 bg-warning/10">
