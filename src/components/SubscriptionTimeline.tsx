@@ -1,15 +1,16 @@
-import { Calendar, ChevronRight, DollarSign, Film, Tv, Clock } from "lucide-react";
-import { OptimizationResult, MonthlyPlan } from "@/lib/optimizer";
+import { Calendar, ChevronRight, DollarSign, Film, Tv, Clock, AlertTriangle } from "lucide-react";
+import { OptimizationResult, MonthlyPlan, ScheduledItem } from "@/lib/optimizer";
 import { STREAMING_SERVICES } from "@/data/services";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { format } from "date-fns";
 
 interface SubscriptionTimelineProps {
   result: OptimizationResult;
 }
 
 export function SubscriptionTimeline({ result }: SubscriptionTimelineProps) {
-  const { rotationSchedule, totalMonthsNeeded, averageMonthlyCost } = result;
+  const { rotationSchedule, totalMonthsNeeded } = result;
 
   const getServiceLogo = (serviceId: string) => {
     const service = STREAMING_SERVICES.find((s) => s.id === serviceId);
@@ -35,66 +36,81 @@ export function SubscriptionTimeline({ result }: SubscriptionTimelineProps) {
     return null;
   }
 
-  // Calculate total cost and savings
   const totalCost = rotationSchedule.reduce((sum, m) => sum + m.monthlyCost, 0);
   const allServicesMonthly = STREAMING_SERVICES.reduce((sum, s) => sum + s.price, 0);
   const potentialSavings = (allServicesMonthly * totalMonthsNeeded) - totalCost;
+  const isBudgetConstrained = rotationSchedule[0]?.isBudgetConstrained;
 
   return (
     <div className="space-y-6 animate-slide-up">
-      {/* Pricing Overview */}
-      <div className="glass rounded-xl p-4 border border-border/50">
-        <h3 className="font-display text-base font-semibold mb-3 flex items-center gap-2">
-          <DollarSign className="w-4 h-4 text-primary" />
-          Service Pricing
+      {/* Pricing Overview - Separate Section */}
+      <div className="glass rounded-xl p-5 border border-border/50">
+        <h3 className="font-display text-lg font-semibold mb-4 flex items-center gap-2">
+          <DollarSign className="w-5 h-5 text-primary" />
+          Service Pricing Overview
         </h3>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {STREAMING_SERVICES.map((service) => (
             <div
               key={service.id}
-              className="flex items-center gap-2 bg-secondary/30 rounded-lg px-3 py-2"
+              className="flex items-center gap-3 bg-secondary/30 rounded-lg px-4 py-3 hover:bg-secondary/50 transition-colors"
             >
-              <span className="text-lg">{service.logo}</span>
+              <span className="text-2xl">{service.logo}</span>
               <div className="flex flex-col">
-                <span className="text-xs font-medium truncate">{service.name}</span>
-                <span className="text-xs text-muted-foreground">${service.price.toFixed(2)}/mo</span>
+                <span className="text-sm font-semibold">{service.name}</span>
+                <span className="text-lg font-bold text-primary">${service.price.toFixed(2)}<span className="text-xs text-muted-foreground">/mo</span></span>
               </div>
             </div>
           ))}
         </div>
       </div>
 
+      {/* Budget Warning */}
+      {isBudgetConstrained && (
+        <div className="glass rounded-xl p-4 border border-warning/50 bg-warning/10">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-warning shrink-0 mt-0.5" />
+            <div>
+              <p className="font-medium text-warning">Budget-Optimized Mode</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Your budget is limited. We've optimized for shorter content that can be completed faster, 
+                prioritizing high-priority items with less watch time.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Summary Stats */}
       <div className="grid grid-cols-3 gap-3">
-        <div className="glass rounded-lg p-3 text-center">
-          <p className="text-2xl font-bold text-primary">{totalMonthsNeeded}</p>
-          <p className="text-xs text-muted-foreground">Months to Watch All</p>
+        <div className="glass rounded-lg p-4 text-center">
+          <p className="text-3xl font-bold text-primary">{totalMonthsNeeded}</p>
+          <p className="text-xs text-muted-foreground mt-1">Months to Complete</p>
         </div>
-        <div className="glass rounded-lg p-3 text-center">
-          <p className="text-2xl font-bold text-success">${totalCost.toFixed(0)}</p>
-          <p className="text-xs text-muted-foreground">Total Cost</p>
+        <div className="glass rounded-lg p-4 text-center">
+          <p className="text-3xl font-bold text-success">${totalCost.toFixed(0)}</p>
+          <p className="text-xs text-muted-foreground mt-1">Total Cost</p>
         </div>
-        <div className="glass rounded-lg p-3 text-center">
-          <p className="text-2xl font-bold text-warning">${potentialSavings.toFixed(0)}</p>
-          <p className="text-xs text-muted-foreground">You Save</p>
+        <div className="glass rounded-lg p-4 text-center">
+          <p className="text-3xl font-bold text-warning">${potentialSavings.toFixed(0)}</p>
+          <p className="text-xs text-muted-foreground mt-1">You Save</p>
         </div>
       </div>
 
       {/* Timeline Header */}
-      <h3 className="font-display text-lg font-semibold flex items-center gap-2">
+      <h3 className="font-display text-lg font-semibold flex items-center gap-2 pt-2">
         <Calendar className="w-5 h-5 text-primary" />
-        Your Watching Schedule
+        Your Monthly Watching Schedule
       </h3>
 
       {/* Timeline */}
       <div className="relative">
-        {/* Timeline line */}
         <div className="absolute left-4 top-8 bottom-4 w-0.5 bg-border" />
 
         <div className="space-y-4">
           {rotationSchedule.map((plan, index) => (
             <TimelineMonth
-              key={`${plan.month}-${index}`}
+              key={`${plan.month}-${plan.year}-${index}`}
               plan={plan}
               index={index}
               getServiceLogo={getServiceLogo}
@@ -147,12 +163,12 @@ function TimelineMonth({ plan, index, getServiceLogo, getActionColor, isLast }: 
       </div>
 
       {/* Content */}
-      <div className="flex-1 glass rounded-xl p-4 space-y-3">
+      <div className="flex-1 glass rounded-xl p-4 space-y-4">
         {/* Header */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-lg">{plan.month}</span>
-            <span className="text-sm text-muted-foreground">
+          <div className="flex items-center gap-3">
+            <span className="font-semibold text-xl">{plan.month} {plan.year}</span>
+            <span className="text-sm text-muted-foreground bg-secondary/50 px-2 py-0.5 rounded">
               ${plan.monthlyCost.toFixed(2)}
             </span>
           </div>
@@ -179,48 +195,42 @@ function TimelineMonth({ plan, index, getServiceLogo, getActionColor, isLast }: 
           ))}
         </div>
 
-        {/* What to Watch This Month */}
+        {/* What to Watch This Month - Detailed Schedule */}
         {plan.itemsToWatch.length > 0 && (
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Clock className="w-3 h-3" />
-              <span>Watch this month:</span>
-              {movieCount > 0 && (
-                <Badge variant="secondary" className="text-xs py-0">
-                  <Film className="w-3 h-3 mr-1" />
-                  {movieCount} movie{movieCount > 1 ? "s" : ""}
-                </Badge>
-              )}
-              {seriesCount > 0 && (
-                <Badge variant="secondary" className="text-xs py-0">
-                  <Tv className="w-3 h-3 mr-1" />
-                  {seriesCount} series
-                </Badge>
-              )}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Clock className="w-4 h-4" />
+                <span className="font-medium">Watch this month ({plan.totalWatchHours.toFixed(0)}h total):</span>
+              </div>
+              <div className="flex gap-2">
+                {movieCount > 0 && (
+                  <Badge variant="secondary" className="text-xs">
+                    <Film className="w-3 h-3 mr-1" />
+                    {movieCount} movie{movieCount > 1 ? "s" : ""}
+                  </Badge>
+                )}
+                {seriesCount > 0 && (
+                  <Badge variant="secondary" className="text-xs">
+                    <Tv className="w-3 h-3 mr-1" />
+                    {seriesCount} series
+                  </Badge>
+                )}
+              </div>
             </div>
-            <div className="flex flex-wrap gap-1.5">
+            
+            {/* Detailed Item Schedule */}
+            <div className="space-y-2">
               {plan.itemsToWatch.map((item) => (
-                <div
-                  key={item.id}
-                  className={cn(
-                    "text-xs px-2 py-1 rounded-md border",
-                    item.priority === "high"
-                      ? "bg-primary/10 border-primary/30 text-primary"
-                      : item.priority === "medium"
-                      ? "bg-warning/10 border-warning/30 text-warning"
-                      : "bg-secondary border-border text-foreground"
-                  )}
-                >
-                  {item.type === "movie" ? "🎬" : "📺"} {item.title}
-                </div>
+                <ScheduleItemCard key={item.id} item={item} />
               ))}
             </div>
           </div>
         )}
 
         {index === 0 && (
-          <p className="text-xs text-success font-medium">
-            ▶ Start here! Best time to begin your streaming journey.
+          <p className="text-xs text-success font-medium pt-1">
+            ▶ Start here! Begin your streaming journey today.
           </p>
         )}
       </div>
@@ -228,6 +238,45 @@ function TimelineMonth({ plan, index, getServiceLogo, getActionColor, isLast }: 
       {!isLast && (
         <ChevronRight className="absolute -bottom-3 left-3 w-4 h-4 text-muted-foreground" />
       )}
+    </div>
+  );
+}
+
+interface ScheduleItemCardProps {
+  item: ScheduledItem;
+}
+
+function ScheduleItemCard({ item }: ScheduleItemCardProps) {
+  const priorityColors = {
+    high: "border-l-primary bg-primary/5",
+    medium: "border-l-warning bg-warning/5",
+    low: "border-l-muted-foreground bg-secondary/30",
+  };
+
+  return (
+    <div
+      className={cn(
+        "flex items-center justify-between p-3 rounded-lg border-l-4 transition-all hover:scale-[1.01]",
+        priorityColors[item.priority as keyof typeof priorityColors] || priorityColors.low
+      )}
+    >
+      <div className="flex items-center gap-3">
+        <span className="text-lg">{item.type === "movie" ? "🎬" : "📺"}</span>
+        <div>
+          <p className="font-medium text-sm">{item.title}</p>
+          <p className="text-xs text-muted-foreground">
+            {item.watchHours.toFixed(1)}h • {item.type === "movie" ? "Movie" : `${item.episodeCount || "?"} episodes`}
+          </p>
+        </div>
+      </div>
+      <div className="text-right">
+        <p className="text-xs font-medium">
+          {format(item.estimatedStartDate, "MMM d")} - {format(item.estimatedEndDate, "MMM d")}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Complete by {format(item.estimatedEndDate, "EEEE")}
+        </p>
+      </div>
     </div>
   );
 }
