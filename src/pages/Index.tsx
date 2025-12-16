@@ -4,6 +4,7 @@ import { Header } from "@/components/Header";
 import { WatchlistInput } from "@/components/WatchlistInput";
 import { BudgetSlider } from "@/components/BudgetSlider";
 import { OptimizationResults } from "@/components/OptimizationResults";
+import { SubscriptionTimeline } from "@/components/SubscriptionTimeline";
 import { Button } from "@/components/ui/button";
 import { WatchlistItem } from "@/data/sampleContent";
 import { optimizeSubscriptions, OptimizationResult } from "@/lib/optimizer";
@@ -84,9 +85,14 @@ const Index = () => {
           </div>
 
           {/* Right Column: Results */}
-          <div>
+          <div className="space-y-6">
             {result ? (
-              <OptimizationResults result={result} />
+              <>
+                <OptimizationResults result={result} />
+                <div className="glass rounded-2xl p-6">
+                  <SubscriptionTimeline result={result} />
+                </div>
+              </>
             ) : (
               <div className="glass rounded-2xl p-8 text-center h-full flex flex-col items-center justify-center min-h-[400px]">
                 <div className="w-16 h-16 rounded-2xl bg-gradient-primary/20 flex items-center justify-center mb-4">
@@ -115,6 +121,15 @@ const Index = () => {
         <footer className="mt-16 text-center text-xs text-muted-foreground">
           <p>
             Data powered by{" "}
+            <a
+              href="https://www.themoviedb.org"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary hover:underline"
+            >
+              TMDB
+            </a>
+            {" & "}
             <a
               href="https://www.justwatch.com"
               target="_blank"
