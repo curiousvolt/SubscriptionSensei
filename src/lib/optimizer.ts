@@ -137,6 +137,32 @@ function preprocessContent(watchlist: WatchlistItem[]): Map<string, ContentState
 }
 
 // ------------------------------
+// HELPER: Get Effective Providers (user-selected overrides TMDB)
+// ------------------------------
+function getEffectiveProviders(item: WatchlistItem): string[] {
+  // User-selected provider takes precedence
+  if (item.userSelectedProvider) {
+    return [item.userSelectedProvider];
+  }
+  return item.providers;
+}
+
+// ------------------------------
+// HELPER: Check if item should be scheduled
+// ------------------------------
+function shouldScheduleItem(item: WatchlistItem): boolean {
+  // Skip items with pending platform selection
+  if (item.pendingPlatformSelection) {
+    return false;
+  }
+  // Skip items with no providers (and no user selection)
+  if (item.providers.length === 0 && !item.userSelectedProvider) {
+    return false;
+  }
+  return true;
+}
+
+// ------------------------------
 // FUNCTION: Calculate Platform Potential
 // ------------------------------
 function calculatePlatformPotential(
@@ -145,8 +171,10 @@ function calculatePlatformPotential(
   contentState: Map<string, ContentState>
 ): { potentialHours: number; coveredItems: WatchlistItem[] } {
   const coveredItems = watchlist.filter(item => {
+    if (!shouldScheduleItem(item)) return false;
     const state = contentState.get(item.id);
-    return item.providers.includes(serviceId) && state && state.remainingMinutes > 0;
+    const effectiveProviders = getEffectiveProviders(item);
+    return effectiveProviders.includes(serviceId) && state && state.remainingMinutes > 0;
   });
   
   if (coveredItems.length === 0) {
@@ -179,8 +207,9 @@ function selectPlatformsForMonth(
   const priorityLevels = ["high", "medium", "low"];
   
   for (const priority of priorityLevels) {
-    // Get remaining content at this priority level
+    // Get remaining content at this priority level (only schedulable items)
     const contentAtPriority = watchlist.filter(item => {
+      if (!shouldScheduleItem(item)) return false;
       const state = contentState.get(item.id);
       return item.priority === priority && state && state.remainingMinutes > 0;
     });
@@ -189,11 +218,13 @@ function selectPlatformsForMonth(
     
     // For each content item at this priority, ensure its platform is selected
     for (const item of contentAtPriority) {
+      const effectiveProviders = getEffectiveProviders(item);
+      
       // Find the cheapest platform that hosts this item (among its providers)
       let bestPlatform: string | null = null;
       let bestCost = Infinity;
       
-      for (const provider of item.providers) {
+      for (const provider of effectiveProviders) {
         // Prefer already-selected platforms (no extra cost)
         if (selectedPlatformIds.has(provider)) {
           bestPlatform = provider;
@@ -466,17 +497,28 @@ export function optimizeSubscriptions(
   
   // Check for infeasible items (content that couldn't be scheduled)
   const deferredItems: { item: WatchlistItem; reason: string }[] = [];
+  
+  // First, add items with pending platform selection
+  watchlist.forEach(item => {
+    if (item.pendingPlatformSelection) {
+      deferredItems.push({
+        item,
+        reason: "Pending platform selection - marked as 'decide later'.",
+      });
+    }
+  });
+  
   contentState.forEach(state => {
+    // Skip items already in deferred (pending platform selection)
+    if (deferredItems.some(d => d.item.id === state.item.id)) return;
+    
     if (state.remainingMinutes > 0) {
-      // Check if item is on any platform
-      const onAnyPlatform = watchlist.some(item => 
-        item.id === state.item.id && item.providers.length > 0
-      );
+      const effectiveProviders = getEffectiveProviders(state.item);
       
-      if (!onAnyPlatform) {
+      if (effectiveProviders.length === 0) {
         deferredItems.push({
           item: state.item,
-          reason: "Not available on any tracked streaming service.",
+          reason: "No streaming platform available. Please select a platform manually.",
         });
       } else {
         const effHours = state.effMinutes / 60;
@@ -560,4 +602,48 @@ function generateExplanation(
   explanation += `Total cost: $${totalCost.toFixed(2)}.`;
   
   return explanation;
+}
+
+// ------------------------------
+// HELPER: Check if watchlist is ready for optimization
+// ------------------------------
+export interface WatchlistReadiness {
+  isReady: boolean;
+  highPriorityMissingPlatform: WatchlistItem[];
+  otherMissingPlatform: WatchlistItem[];
+  pendingPlatformSelection: WatchlistItem[];
+}
+
+export function checkWatchlistReadiness(watchlist: WatchlistItem[]): WatchlistReadiness {
+  const highPriorityMissingPlatform: WatchlistItem[] = [];
+  const otherMissingPlatform: WatchlistItem[] = [];
+  const pendingPlatformSelection: WatchlistItem[] = [];
+  
+  for (const item of watchlist) {
+    // Items explicitly marked as "decide later"
+    if (item.pendingPlatformSelection) {
+      pendingPlatformSelection.push(item);
+      continue;
+    }
+    
+    // Items with no provider (TMDB or user-selected)
+    const hasProvider = item.providers.length > 0 || !!item.userSelectedProvider;
+    if (!hasProvider) {
+      if (item.priority === "high") {
+        highPriorityMissingPlatform.push(item);
+      } else {
+        otherMissingPlatform.push(item);
+      }
+    }
+  }
+  
+  // Ready if no HIGH-priority items are missing platforms
+  const isReady = highPriorityMissingPlatform.length === 0;
+  
+  return {
+    isReady,
+    highPriorityMissingPlatform,
+    otherMissingPlatform,
+    pendingPlatformSelection,
+  };
 }

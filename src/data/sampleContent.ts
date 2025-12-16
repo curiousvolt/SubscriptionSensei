@@ -3,12 +3,14 @@ export interface WatchlistItem {
   title: string;
   type: "movie" | "tv";
   priority: "high" | "medium" | "low";
-  providers: string[];
+  providers: string[]; // TMDB-provided providers
   poster?: string;
   year?: number;
   episodeCount?: number;
   seasonCount?: number;
   totalWatchTimeMinutes?: number; // Total watch time in minutes from TMDB
+  userSelectedProvider?: string; // User-selected provider override (when TMDB has no data)
+  pendingPlatformSelection?: boolean; // True if user chose "decide later"
 }
 
 export const SAMPLE_WATCHLIST: WatchlistItem[] = [

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Sparkles, Zap } from "lucide-react";
+import { useState, useMemo } from "react";
+import { Sparkles, Zap, AlertTriangle } from "lucide-react";
 import { Header } from "@/components/Header";
 import { WatchlistInput } from "@/components/WatchlistInput";
 import { BudgetSlider } from "@/components/BudgetSlider";
@@ -7,7 +7,7 @@ import { OptimizationResults } from "@/components/OptimizationResults";
 import { SubscriptionTimeline } from "@/components/SubscriptionTimeline";
 import { Button } from "@/components/ui/button";
 import { WatchlistItem } from "@/data/sampleContent";
-import { optimizeSubscriptions, OptimizationResult } from "@/lib/optimizer";
+import { optimizeSubscriptions, OptimizationResult, checkWatchlistReadiness } from "@/lib/optimizer";
 
 const Index = () => {
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
@@ -15,8 +15,11 @@ const Index = () => {
   const [result, setResult] = useState<OptimizationResult | null>(null);
   const [isOptimizing, setIsOptimizing] = useState(false);
 
+  // Check if watchlist is ready for optimization
+  const readiness = useMemo(() => checkWatchlistReadiness(watchlist), [watchlist]);
+
   const handleOptimize = async () => {
-    if (watchlist.length === 0) return;
+    if (watchlist.length === 0 || !readiness.isReady) return;
 
     setIsOptimizing(true);
     
@@ -63,17 +66,39 @@ const Index = () => {
               <BudgetSlider budget={budget} setBudget={setBudget} />
             </div>
 
+            {/* Warning for missing platform selections */}
+            {!readiness.isReady && watchlist.length > 0 && (
+              <div className="glass rounded-xl p-4 border border-warning/30 bg-warning/5">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-warning">
+                      Platform selection required
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {readiness.highPriorityMissingPlatform.length} high-priority item(s) need a streaming platform assigned before optimization can begin.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <Button
               variant="gradient"
               size="xl"
               className="w-full"
               onClick={handleOptimize}
-              disabled={watchlist.length === 0 || isOptimizing}
+              disabled={watchlist.length === 0 || isOptimizing || !readiness.isReady}
             >
               {isOptimizing ? (
                 <>
                   <div className="w-5 h-5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                   Analyzing...
+                </>
+              ) : !readiness.isReady && watchlist.length > 0 ? (
+                <>
+                  <AlertTriangle className="w-5 h-5" />
+                  Select Platforms First
                 </>
               ) : (
                 <>
