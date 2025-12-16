@@ -17,6 +17,20 @@ export const STREAMING_SERVICES: StreamingService[] = [
   { id: "peacock", name: "Peacock", price: 7.99, color: "peacock", logo: "🦚" },
 ];
 
+// TMDB Provider ID to our service ID mapping
+export const PROVIDER_MAP: Record<number, string> = {
+  8: "netflix",      // Netflix
+  337: "disney",     // Disney+
+  15: "hulu",        // Hulu
+  9: "amazon",       // Amazon Prime Video
+  119: "amazon",     // Amazon Prime Video (alternate)
+  1899: "hbo",       // Max
+  384: "hbo",        // HBO Max (legacy)
+  350: "apple",      // Apple TV+
+  531: "paramount",  // Paramount+
+  386: "peacock",    // Peacock
+};
+
 export const SERVICE_PRICES: Record<string, number> = STREAMING_SERVICES.reduce(
   (acc, service) => ({ ...acc, [service.id]: service.price }),
   {}
