@@ -516,24 +516,31 @@ function scheduleContentForMonth(
       }
     }
     
-    // Schedule series with their allocated time
+    // Schedule series with their allocated time - SEQUENTIAL DATE ASSIGNMENT
+    // Single-watch constraint: only one item active at any calendar date
     for (const state of activeSeries) {
       const allocatedMinutes = allocations.get(state.item.id) || 0;
       if (allocatedMinutes <= 0) continue;
       
+      // Calculate days needed: ceil(watch_hours / daily_watch_hours)
+      const daysNeeded = Math.ceil(allocatedMinutes / (DAILY_WATCH_HOURS * 60));
+      
+      // Start date is the current available day
       const startDay = currentDay;
       const startDate = new Date(monthStart);
       startDate.setDate(startDate.getDate() + startDay - 1);
       
-      // Calculate end day based on daily watch capacity
-      const daysNeeded = Math.ceil(allocatedMinutes / (DAILY_WATCH_HOURS * 60));
+      // End day is start + days needed - 1, capped at month boundary
       const endDay = Math.min(startDay + daysNeeded - 1, DAYS_IN_MONTH);
+      const actualDaysUsed = endDay - startDay + 1;
       
       const endDate = new Date(monthStart);
       endDate.setDate(endDate.getDate() + endDay - 1);
       
-      const watchHours = allocatedMinutes / 60;
-      const newRemaining = state.remainingMinutes - allocatedMinutes;
+      // Calculate actual watched minutes based on days used (for month boundary cases)
+      const actualWatchedMinutes = Math.min(allocatedMinutes, actualDaysUsed * DAILY_WATCH_HOURS * 60);
+      const watchHours = actualWatchedMinutes / 60;
+      const newRemaining = state.remainingMinutes - actualWatchedMinutes;
       
       scheduledItems.push({
         ...state.item,
@@ -546,11 +553,15 @@ function scheduleContentForMonth(
       
       // Update content state
       state.remainingMinutes = newRemaining;
-      remainingCapacityMinutes -= allocatedMinutes;
+      remainingCapacityMinutes -= actualWatchedMinutes;
+      
+      // CRITICAL: Advance currentDay to the day AFTER this item ends
+      // This ensures no overlapping date ranges
+      currentDay = endDay + 1;
+      
+      // If we've exceeded the month, stop scheduling
+      if (currentDay > DAYS_IN_MONTH) break;
     }
-    
-    // Move current day forward
-    currentDay = Math.min(currentDay + Math.ceil(activeSeries.length / 2), DAYS_IN_MONTH);
   }
   
   // STEP E: Lower priority fill already handled by processing all buckets
