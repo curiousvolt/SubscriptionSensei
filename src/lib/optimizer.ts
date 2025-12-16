@@ -59,9 +59,10 @@ export interface MonthlyPlan {
 export interface OptimizationResult {
   subscribeThisMonth: OptimizedService[];
   deferredItems: { item: WatchlistItem; reason: string }[];
-  totalCost: number;
-  estimatedSavings: number;
-  coveragePercent: number;
+  totalCost: number;           // PLAN-WIDE: Total cost across all months
+  estimatedSavings: number;    // PLAN-WIDE: Total savings across all months
+  coveragePercent: number;     // PLAN-WIDE: % of watchlist fully scheduled
+  uniqueServicesCount: number; // PLAN-WIDE: Unique services used across plan
   explanation: string;
   rotationSchedule: MonthlyPlan[];
   totalMonthsNeeded: number;
@@ -727,21 +728,30 @@ export function optimizeSubscriptions(
     }
   });
   
-  // Calculate results
+  // Calculate PLAN-WIDE results
   const totalMonthsNeeded = rotationSchedule.length;
-  const totalRotationCost = rotationSchedule.reduce((sum, m) => sum + m.monthlyCost, 0);
-  const averageMonthlyCost = totalMonthsNeeded > 0 ? totalRotationCost / totalMonthsNeeded : 0;
+  const totalPlanCost = rotationSchedule.reduce((sum, m) => sum + m.monthlyCost, 0);
+  const averageMonthlyCost = totalMonthsNeeded > 0 ? totalPlanCost / totalMonthsNeeded : 0;
   
   const firstMonthServices = rotationSchedule[0]?.services || [];
   
-  // Coverage calculation
+  // PLAN-WIDE: Count unique services across entire plan
+  const allServicesUsed = new Set<string>();
+  for (const month of rotationSchedule) {
+    for (const service of month.services) {
+      allServicesUsed.add(service.service);
+    }
+  }
+  const uniqueServicesCount = allServicesUsed.size;
+  
+  // PLAN-WIDE: Coverage calculation (% of watchlist fully scheduled)
   const totalItems = watchlist.length;
   const watchedItems = totalItems - deferredItems.length;
   const coveragePercent = totalItems > 0 ? Math.round((watchedItems / totalItems) * 100) : 0;
   
-  // Savings vs subscribing to all services
+  // PLAN-WIDE: Savings vs subscribing to all services for entire plan duration
   const allServicesCost = Object.values(PLATFORM_PRICES).reduce((sum, price) => sum + price, 0);
-  const estimatedSavings = (allServicesCost * totalMonthsNeeded) - totalRotationCost;
+  const estimatedSavings = (allServicesCost * totalMonthsNeeded) - totalPlanCost;
   
   const explanation = generateExplanation(
     firstMonthServices,
@@ -753,9 +763,10 @@ export function optimizeSubscriptions(
   return {
     subscribeThisMonth: firstMonthServices,
     deferredItems,
-    totalCost: rotationSchedule[0]?.monthlyCost || 0,
-    estimatedSavings,
-    coveragePercent,
+    totalCost: totalPlanCost,           // PLAN-WIDE total
+    estimatedSavings,                    // PLAN-WIDE savings
+    coveragePercent,                     // PLAN-WIDE coverage
+    uniqueServicesCount,                 // PLAN-WIDE unique services
     explanation,
     rotationSchedule,
     totalMonthsNeeded,

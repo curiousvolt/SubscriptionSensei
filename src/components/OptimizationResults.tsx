@@ -45,12 +45,12 @@ export function OptimizationResults({ result }: OptimizationResultsProps) {
         <MetricCard
           icon={<Layers className="w-4 h-4" />}
           label="Services"
-          value={result.subscribeThisMonth.length.toString()}
+          value={result.uniqueServicesCount.toString()}
           variant="default"
         />
         <MetricCard
           icon={<Clock className="w-4 h-4" />}
-          label="Cost"
+          label="Total Cost"
           value={`$${result.totalCost.toFixed(0)}`}
           variant="muted"
         />
