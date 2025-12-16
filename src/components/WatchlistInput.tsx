@@ -188,7 +188,7 @@ export function WatchlistInput({ watchlist, setWatchlist }: WatchlistInputProps)
       <div className="flex items-center justify-between">
         <h2 className="font-display text-base font-semibold tracking-tight">Your Watchlist</h2>
         <div className="flex gap-1">
-          <Button variant="ghost" size="sm" onClick={loadSampleData} className="text-xs h-8 px-2.5">
+          <Button variant="ghost" size="sm" onClick={loadSampleData} className="text-xs h-8 px-2.5 hidden">
             <Wand2 className="w-3.5 h-3.5 mr-1" />
             Load Sample
           </Button>
