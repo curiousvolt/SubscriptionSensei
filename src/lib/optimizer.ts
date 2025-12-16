@@ -166,102 +166,96 @@ function calculatePlatformPotential(
 }
 
 // ------------------------------
-// FUNCTION: Greedy Platform Selection (Knapsack-like)
+// FUNCTION: Priority-Driven Platform Selection
 // ------------------------------
 function selectPlatformsForMonth(
   watchlist: WatchlistItem[],
   contentState: Map<string, ContentState>,
   userBudget: number
 ): OptimizedService[] {
-  // Get unique platforms from watchlist that have remaining content
-  const platformIds = new Set<string>();
-  for (const item of watchlist) {
-    const state = contentState.get(item.id);
-    if (state && state.remainingMinutes > 0) {
-      item.providers.forEach(p => platformIds.add(p));
+  const selectedPlatformIds = new Set<string>();
+  
+  // PRIORITY-FIRST: Process content by priority level (HIGH → MEDIUM → LOW)
+  const priorityLevels = ["high", "medium", "low"];
+  
+  for (const priority of priorityLevels) {
+    // Get remaining content at this priority level
+    const contentAtPriority = watchlist.filter(item => {
+      const state = contentState.get(item.id);
+      return item.priority === priority && state && state.remainingMinutes > 0;
+    });
+    
+    if (contentAtPriority.length === 0) continue;
+    
+    // For each content item at this priority, ensure its platform is selected
+    for (const item of contentAtPriority) {
+      // Find the cheapest platform that hosts this item (among its providers)
+      let bestPlatform: string | null = null;
+      let bestCost = Infinity;
+      
+      for (const provider of item.providers) {
+        // Prefer already-selected platforms (no extra cost)
+        if (selectedPlatformIds.has(provider)) {
+          bestPlatform = provider;
+          bestCost = 0;
+          break;
+        }
+        
+        const cost = getPlatformPrice(provider);
+        if (cost < bestCost) {
+          bestCost = cost;
+          bestPlatform = provider;
+        }
+      }
+      
+      // Add the platform if not already selected and fits budget
+      if (bestPlatform && !selectedPlatformIds.has(bestPlatform)) {
+        const currentCost = Array.from(selectedPlatformIds).reduce(
+          (sum, id) => sum + getPlatformPrice(id), 0
+        );
+        const platformCost = getPlatformPrice(bestPlatform);
+        
+        // For HIGH priority: FORCE inclusion even if over budget (priority > cost)
+        // For MEDIUM/LOW: respect budget constraint
+        if (priority === "high" || currentCost + platformCost <= userBudget) {
+          selectedPlatformIds.add(bestPlatform);
+        }
+      }
     }
   }
   
-  // Calculate value score for each platform
-  const platformAnalysis: {
-    serviceId: string;
-    potentialHours: number;
-    coveredItems: WatchlistItem[];
-    cost: number;
-    valueScore: number;
-  }[] = [];
+  // Build OptimizedService array from selected platforms
+  const selectedPlatforms: OptimizedService[] = [];
   
-  for (const serviceId of platformIds) {
+  for (const serviceId of selectedPlatformIds) {
     const { potentialHours, coveredItems } = calculatePlatformPotential(
       serviceId,
       watchlist,
       contentState
     );
     
-    if (potentialHours > 0) {
-      const cost = getPlatformPrice(serviceId);
-      const valueScore = potentialHours / cost; // hours per USD
-      
-      platformAnalysis.push({
-        serviceId,
-        potentialHours,
-        coveredItems,
-        cost,
-        valueScore,
-      });
-    }
+    const cost = getPlatformPrice(serviceId);
+    const { name, color } = getPlatformInfo(serviceId);
+    
+    selectedPlatforms.push({
+      service: serviceId,
+      serviceName: name,
+      cost,
+      itemsToWatch: coveredItems,
+      valueDensity: potentialHours / cost,
+      color,
+      watchTime: Math.min(potentialHours, MONTHLY_WATCH_LIMIT),
+    });
   }
   
-  // Sort by value score descending
-  platformAnalysis.sort((a, b) => b.valueScore - a.valueScore);
-  
-  // Greedy selection within budget and time constraints
-  const selectedPlatforms: OptimizedService[] = [];
-  let remainingBudget = userBudget;
-  let remainingTimeHours = MONTHLY_WATCH_LIMIT;
-  
-  for (const platform of platformAnalysis) {
-    // Check if platform fits budget
-    if (platform.cost <= remainingBudget) {
-      // Calculate actual usable time (capped by remaining time)
-      const usableTime = Math.min(platform.potentialHours, remainingTimeHours);
-      
-      if (usableTime > 0) {
-        const { name, color } = getPlatformInfo(platform.serviceId);
-        
-        selectedPlatforms.push({
-          service: platform.serviceId,
-          serviceName: name,
-          cost: platform.cost,
-          itemsToWatch: platform.coveredItems,
-          valueDensity: platform.valueScore,
-          color,
-          watchTime: usableTime,
-        });
-        
-        remainingBudget -= platform.cost;
-        remainingTimeHours -= usableTime;
-      }
-    }
-  }
-  
-  // If nothing selected but there are platforms, pick the best value one that fits budget
-  if (selectedPlatforms.length === 0 && platformAnalysis.length > 0) {
-    const affordable = platformAnalysis.filter(p => p.cost <= userBudget);
-    if (affordable.length > 0) {
-      const best = affordable[0];
-      const { name, color } = getPlatformInfo(best.serviceId);
-      selectedPlatforms.push({
-        service: best.serviceId,
-        serviceName: name,
-        cost: best.cost,
-        itemsToWatch: best.coveredItems,
-        valueDensity: best.valueScore,
-        color,
-        watchTime: Math.min(best.potentialHours, MONTHLY_WATCH_LIMIT),
-      });
-    }
-  }
+  // Sort by priority of content they cover (platforms with HIGH priority content first)
+  selectedPlatforms.sort((a, b) => {
+    const aHasHigh = a.itemsToWatch.some(i => i.priority === "high");
+    const bHasHigh = b.itemsToWatch.some(i => i.priority === "high");
+    if (aHasHigh && !bHasHigh) return -1;
+    if (!aHasHigh && bHasHigh) return 1;
+    return 0;
+  });
   
   return selectedPlatforms;
 }
