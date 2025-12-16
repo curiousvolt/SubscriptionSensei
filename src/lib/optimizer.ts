@@ -447,70 +447,93 @@ function scheduleContentForMonth(
     }
     
     // STEP C: Series with FAIR allocation
-    const activeSeries = series.filter(s => s.remainingMinutes > 0);
+    let activeSeries = series.filter(s => s.remainingMinutes > 0);
     if (activeSeries.length === 0 || remainingCapacityMinutes <= 0) continue;
     
-    // Calculate FAIR share: 60h / |R| per item
-    const equalShareMinutes = Math.floor(remainingCapacityMinutes / activeSeries.length);
+    // SERIES COMPLETION RULE: First, complete any series that can fit entirely
+    // This check occurs BEFORE fair allocation to prevent unnecessary splitting
+    const completableSeries: ContentState[] = [];
+    const incompletableSeries: ContentState[] = [];
     
-    // Track allocations and surplus
-    const allocations = new Map<string, number>();
-    let surplusMinutes = 0;
+    // Sort by remaining time (shortest first) to maximize completions
+    const sortedSeries = [...activeSeries].sort((a, b) => a.remainingMinutes - b.remainingMinutes);
     
-    // First pass: allocate equal shares
-    for (const state of activeSeries) {
-      const needed = state.remainingMinutes;
-      const allocated = Math.min(needed, equalShareMinutes);
-      allocations.set(state.item.id, allocated);
-      
-      // If item finishes early, track surplus for redistribution
-      if (needed < equalShareMinutes) {
-        surplusMinutes += equalShareMinutes - needed;
+    let capacityForCompletion = remainingCapacityMinutes;
+    for (const state of sortedSeries) {
+      // If series can be fully completed within remaining capacity, mark for completion
+      if (state.remainingMinutes <= capacityForCompletion) {
+        completableSeries.push(state);
+        capacityForCompletion -= state.remainingMinutes;
+      } else {
+        incompletableSeries.push(state);
       }
     }
     
-    // Second pass: redistribute surplus to items that need more
-    if (surplusMinutes > 0) {
-      const needsMore = activeSeries.filter(s => {
-        const alloc = allocations.get(s.item.id) || 0;
-        return s.remainingMinutes > alloc;
-      });
+    // Track allocations
+    const allocations = new Map<string, number>();
+    
+    // Allocate FULL remaining time to completable series (no splitting)
+    for (const state of completableSeries) {
+      allocations.set(state.item.id, state.remainingMinutes);
+    }
+    
+    // For incompletable series, apply FAIR allocation with remaining capacity
+    if (incompletableSeries.length > 0 && capacityForCompletion > 0) {
+      const equalShareMinutes = Math.floor(capacityForCompletion / incompletableSeries.length);
+      let surplusMinutes = 0;
       
-      while (surplusMinutes > 0 && needsMore.length > 0) {
-        const extraPerItem = Math.floor(surplusMinutes / needsMore.length);
-        if (extraPerItem === 0) {
-          // Distribute 1 minute at a time for remainder
-          for (let i = 0; i < needsMore.length && surplusMinutes > 0; i++) {
-            const state = needsMore[i];
+      // First pass: allocate equal shares
+      for (const state of incompletableSeries) {
+        const needed = state.remainingMinutes;
+        const allocated = Math.min(needed, equalShareMinutes);
+        allocations.set(state.item.id, allocated);
+        
+        if (needed < equalShareMinutes) {
+          surplusMinutes += equalShareMinutes - needed;
+        }
+      }
+      
+      // Second pass: redistribute surplus
+      if (surplusMinutes > 0) {
+        const needsMore = incompletableSeries.filter(s => {
+          const alloc = allocations.get(s.item.id) || 0;
+          return s.remainingMinutes > alloc;
+        });
+        
+        while (surplusMinutes > 0 && needsMore.length > 0) {
+          const extraPerItem = Math.floor(surplusMinutes / needsMore.length);
+          if (extraPerItem === 0) {
+            for (let i = 0; i < needsMore.length && surplusMinutes > 0; i++) {
+              const state = needsMore[i];
+              const currentAlloc = allocations.get(state.item.id) || 0;
+              const canUse = state.remainingMinutes - currentAlloc;
+              if (canUse > 0) {
+                allocations.set(state.item.id, currentAlloc + 1);
+                surplusMinutes -= 1;
+              }
+            }
+            break;
+          }
+          
+          let redistributed = 0;
+          for (const state of needsMore) {
             const currentAlloc = allocations.get(state.item.id) || 0;
-            const canUse = state.remainingMinutes - currentAlloc;
+            const canUse = Math.min(extraPerItem, state.remainingMinutes - currentAlloc);
             if (canUse > 0) {
-              allocations.set(state.item.id, currentAlloc + 1);
-              surplusMinutes -= 1;
+              allocations.set(state.item.id, currentAlloc + canUse);
+              redistributed += canUse;
             }
           }
-          break;
-        }
-        
-        let redistributed = 0;
-        for (const state of needsMore) {
-          const currentAlloc = allocations.get(state.item.id) || 0;
-          const canUse = Math.min(extraPerItem, state.remainingMinutes - currentAlloc);
-          if (canUse > 0) {
-            allocations.set(state.item.id, currentAlloc + canUse);
-            redistributed += canUse;
-          }
-        }
-        
-        surplusMinutes -= redistributed;
-        if (redistributed === 0) break;
-        
-        // Update needsMore list
-        needsMore.length = 0;
-        for (const state of activeSeries) {
-          const alloc = allocations.get(state.item.id) || 0;
-          if (state.remainingMinutes > alloc) {
-            needsMore.push(state);
+          
+          surplusMinutes -= redistributed;
+          if (redistributed === 0) break;
+          
+          needsMore.length = 0;
+          for (const state of incompletableSeries) {
+            const alloc = allocations.get(state.item.id) || 0;
+            if (state.remainingMinutes > alloc) {
+              needsMore.push(state);
+            }
           }
         }
       }
