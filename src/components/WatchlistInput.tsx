@@ -6,6 +6,7 @@ import { STREAMING_SERVICES, PROVIDER_MAP } from "@/data/services";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { PlatformSelector } from "./PlatformSelector";
 
 interface WatchlistInputProps {
   watchlist: WatchlistItem[];
@@ -137,6 +138,30 @@ export function WatchlistInput({ watchlist, setWatchlist }: WatchlistInputProps)
     setWatchlist(
       watchlist.map((item) => (item.id === id ? { ...item, priority } : item))
     );
+  };
+
+  const updateUserSelectedProvider = (id: string, provider: string | null) => {
+    setWatchlist(
+      watchlist.map((item) => {
+        if (item.id !== id) return item;
+        if (provider === null) {
+          // User chose "decide later"
+          return { ...item, userSelectedProvider: undefined, pendingPlatformSelection: true };
+        }
+        return { ...item, userSelectedProvider: provider, pendingPlatformSelection: false };
+      })
+    );
+  };
+
+  // Check if item needs platform selection (no TMDB providers)
+  const needsPlatformSelection = (item: WatchlistItem) => {
+    return item.providers.length === 0 && !item.userSelectedProvider && !item.pendingPlatformSelection;
+  };
+
+  // Get effective providers for display (user-selected or TMDB)
+  const getEffectiveProviders = (item: WatchlistItem): string[] => {
+    if (item.userSelectedProvider) return [item.userSelectedProvider];
+    return item.providers;
   };
 
   const loadSampleData = () => {
@@ -302,12 +327,48 @@ export function WatchlistInput({ watchlist, setWatchlist }: WatchlistInputProps)
                   )}
                 </div>
                 <div className="flex items-center gap-2 mt-1">
-                  <span className="text-xs text-muted-foreground">
-                    {item.providers.length > 0 
-                      ? item.providers.map(getServiceName).join(", ")
-                      : "No streaming provider"
-                    }
-                  </span>
+                  {/* Show platform selector if no TMDB providers */}
+                  {item.providers.length === 0 && !item.userSelectedProvider ? (
+                    item.pendingPlatformSelection ? (
+                      <span className="flex items-center gap-1 text-xs text-warning italic">
+                        Pending selection
+                        <button 
+                          onClick={() => setWatchlist(watchlist.map(i => 
+                            i.id === item.id ? { ...i, pendingPlatformSelection: false } : i
+                          ))}
+                          className="text-muted-foreground hover:text-primary ml-1"
+                          title="Select platform"
+                        >
+                          (select)
+                        </button>
+                      </span>
+                    ) : (
+                      <PlatformSelector
+                        itemId={item.id}
+                        currentProvider={item.userSelectedProvider}
+                        onSelect={updateUserSelectedProvider}
+                      />
+                    )
+                  ) : (
+                    <span className="text-xs text-muted-foreground">
+                      {item.userSelectedProvider ? (
+                        <span className="flex items-center gap-1">
+                          <span className="text-primary">{getServiceName(item.userSelectedProvider)}</span>
+                          <button 
+                            onClick={() => setWatchlist(watchlist.map(i => 
+                              i.id === item.id ? { ...i, userSelectedProvider: undefined, pendingPlatformSelection: false } : i
+                            ))}
+                            className="text-muted-foreground hover:text-destructive ml-1"
+                            title="Change platform"
+                          >
+                            (change)
+                          </button>
+                        </span>
+                      ) : (
+                        getEffectiveProviders(item).map(getServiceName).join(", ")
+                      )}
+                    </span>
+                  )}
                 </div>
               </div>
 
