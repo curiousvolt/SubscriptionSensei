@@ -164,40 +164,92 @@ function getActivePriorityBucket(
 }
 
 // ============================================
-// STEP B: MANDATORY PLATFORM INCLUSION
+// STEP B: MANDATORY PLATFORM INCLUSION (BUDGET-AWARE)
 // ============================================
 
 /**
- * Get all required platforms for a set of items
- * MUST include all platforms needed - cost optimization is secondary
+ * Get the cheapest provider for a single item
  */
-function getRequiredPlatforms(items: WatchlistItem[]): Set<string> {
-  const required = new Set<string>();
+function getCheapestProvider(item: WatchlistItem): { provider: string; cost: number } | null {
+  const providers = getEffectiveProviders(item);
+  if (providers.length === 0) return null;
   
-  for (const item of items) {
-    const providers = getEffectiveProviders(item);
-    if (providers.length > 0) {
-      // Add the cheapest provider for this item
-      let cheapest = providers[0];
-      let cheapestPrice = getPlatformPrice(providers[0]);
-      
-      for (const p of providers) {
-        const price = getPlatformPrice(p);
-        if (price < cheapestPrice) {
-          cheapest = p;
-          cheapestPrice = price;
-        }
-      }
-      required.add(cheapest);
+  let cheapest = providers[0];
+  let cheapestPrice = getPlatformPrice(providers[0]);
+  
+  for (const p of providers) {
+    const price = getPlatformPrice(p);
+    if (price < cheapestPrice) {
+      cheapest = p;
+      cheapestPrice = price;
     }
   }
   
-  return required;
+  return { provider: cheapest, cost: cheapestPrice };
 }
 
 /**
- * Select platforms for the month
- * Priority items MUST have their platforms included
+ * Calculate total cost for a set of platforms
+ */
+function calculatePlatformsCost(platformIds: Set<string>): number {
+  let total = 0;
+  for (const id of platformIds) {
+    total += getPlatformPrice(id);
+  }
+  return total;
+}
+
+/**
+ * Select items that can fit within budget for a priority bucket
+ * Returns items that can be scheduled this month without exceeding budget
+ */
+function selectItemsWithinBudget(
+  items: WatchlistItem[],
+  budget: number
+): { selectedItems: WatchlistItem[]; deferredItems: WatchlistItem[] } {
+  // Group items by their cheapest platform
+  const itemsByPlatform = new Map<string, WatchlistItem[]>();
+  
+  for (const item of items) {
+    const cheapest = getCheapestProvider(item);
+    if (!cheapest) continue;
+    
+    const existing = itemsByPlatform.get(cheapest.provider) || [];
+    existing.push(item);
+    itemsByPlatform.set(cheapest.provider, existing);
+  }
+  
+  // Sort platforms by cost (cheapest first)
+  const platformsWithCosts = Array.from(itemsByPlatform.keys()).map(p => ({
+    platform: p,
+    cost: getPlatformPrice(p),
+    items: itemsByPlatform.get(p) || [],
+  }));
+  platformsWithCosts.sort((a, b) => a.cost - b.cost);
+  
+  // Greedily select platforms within budget
+  const selectedPlatforms = new Set<string>();
+  const selectedItems: WatchlistItem[] = [];
+  const deferredItems: WatchlistItem[] = [];
+  let currentCost = 0;
+  
+  for (const { platform, cost, items: platformItems } of platformsWithCosts) {
+    if (currentCost + cost <= budget) {
+      selectedPlatforms.add(platform);
+      currentCost += cost;
+      selectedItems.push(...platformItems);
+    } else {
+      // Budget exceeded - defer these items
+      deferredItems.push(...platformItems);
+    }
+  }
+  
+  return { selectedItems, deferredItems };
+}
+
+/**
+ * Select platforms for the month with HARD BUDGET CAP
+ * Budget is non-negotiable - if high-priority content exceeds budget, split across months
  */
 function selectPlatformsForMonth(
   activeBucket: { priority: string; items: WatchlistItem[] },
@@ -205,19 +257,33 @@ function selectPlatformsForMonth(
   contentState: Map<string, ContentState>,
   budget: number,
   previousPlatforms: Set<string>
-): OptimizedService[] {
-  const selectedIds = new Set<string>();
+): { platforms: OptimizedService[]; itemsToSchedule: WatchlistItem[] } {
   
-  // MANDATORY: Include all platforms required for active priority bucket
-  const requiredPlatforms = getRequiredPlatforms(activeBucket.items);
-  for (const platformId of requiredPlatforms) {
-    selectedIds.add(platformId);
+  // Filter items that still have remaining watch time
+  const activeItems = activeBucket.items.filter(item => {
+    const state = contentState.get(item.id);
+    return state && state.remainingMinutes > 0;
+  });
+  
+  // Select items within budget
+  const { selectedItems, deferredItems } = selectItemsWithinBudget(activeItems, budget);
+  
+  // Get unique platforms needed for selected items
+  const selectedPlatformIds = new Set<string>();
+  for (const item of selectedItems) {
+    const cheapest = getCheapestProvider(item);
+    if (cheapest) {
+      selectedPlatformIds.add(cheapest.provider);
+    }
+  }
+  
+  // VALIDATION: Ensure we don't exceed budget (should never happen due to selectItemsWithinBudget)
+  let totalCost = calculatePlatformsCost(selectedPlatformIds);
+  if (totalCost > budget) {
+    console.warn(`Budget validation failed: $${totalCost} > $${budget}. This should not happen.`);
   }
   
   // OPTIONAL: If budget allows, add platforms for lower priority items
-  let currentCost = Array.from(selectedIds).reduce((sum, id) => sum + getPlatformPrice(id), 0);
-  
-  // Get lower priority items that could benefit from additional platforms
   const lowerPriorityItems = watchlist.filter(item => {
     if (!shouldScheduleItem(item)) return false;
     const state = contentState.get(item.id);
@@ -229,32 +295,38 @@ function selectPlatformsForMonth(
   
   // Try to add platforms for lower priority items if budget allows
   for (const item of lowerPriorityItems) {
-    const providers = getEffectiveProviders(item);
-    for (const provider of providers) {
-      if (selectedIds.has(provider)) continue;
-      
-      const cost = getPlatformPrice(provider);
-      if (currentCost + cost <= budget) {
-        // Prefer previously used platforms
-        if (previousPlatforms.has(provider)) {
-          selectedIds.add(provider);
-          currentCost += cost;
-          break;
-        }
+    const cheapest = getCheapestProvider(item);
+    if (!cheapest) continue;
+    
+    if (selectedPlatformIds.has(cheapest.provider)) {
+      // Platform already selected, item can be scheduled
+      selectedItems.push(item);
+      continue;
+    }
+    
+    if (totalCost + cheapest.cost <= budget) {
+      // Prefer previously used platforms
+      if (previousPlatforms.has(cheapest.provider)) {
+        selectedPlatformIds.add(cheapest.provider);
+        totalCost += cheapest.cost;
+        selectedItems.push(item);
       }
     }
+  }
+  
+  // FINAL VALIDATION: Ensure budget is respected
+  if (totalCost > budget) {
+    console.error(`CRITICAL: Monthly cost $${totalCost} exceeds budget $${budget}`);
   }
   
   // Build OptimizedService array
   const selectedPlatforms: OptimizedService[] = [];
   
-  for (const serviceId of selectedIds) {
-    // Get all items this platform can serve (from current content state)
-    const coveredItems = watchlist.filter(item => {
-      if (!shouldScheduleItem(item)) return false;
-      const state = contentState.get(item.id);
-      const providers = getEffectiveProviders(item);
-      return providers.includes(serviceId) && state && state.remainingMinutes > 0;
+  for (const serviceId of selectedPlatformIds) {
+    // Get items this platform can serve (from selected items only)
+    const coveredItems = selectedItems.filter(item => {
+      const cheapest = getCheapestProvider(item);
+      return cheapest && cheapest.provider === serviceId;
     });
     
     let totalWatchHours = 0;
@@ -282,7 +354,7 @@ function selectPlatformsForMonth(
   // Sort by items count (most content first)
   selectedPlatforms.sort((a, b) => b.itemsToWatch.length - a.itemsToWatch.length);
   
-  return selectedPlatforms;
+  return { platforms: selectedPlatforms, itemsToSchedule: selectedItems };
 }
 
 // ============================================
@@ -524,8 +596,8 @@ export function optimizeSubscriptions(
     
     if (!activeBucket) break; // All content watched
     
-    // STEP B: Select platforms (mandatory for active bucket)
-    const selectedPlatforms = selectPlatformsForMonth(
+    // STEP B: Select platforms with HARD BUDGET CAP
+    const { platforms: selectedPlatforms, itemsToSchedule } = selectPlatformsForMonth(
       activeBucket,
       watchlist,
       contentState,
@@ -535,13 +607,21 @@ export function optimizeSubscriptions(
     
     if (selectedPlatforms.length === 0) break;
     
+    // BUDGET VALIDATION CHECKPOINT: Ensure monthly cost <= budget
+    const monthlyCost = selectedPlatforms.reduce((sum, p) => sum + p.cost, 0);
+    if (monthlyCost > budget) {
+      console.error(`BUDGET VIOLATION: Month cost $${monthlyCost.toFixed(2)} exceeds budget $${budget}. Regenerating...`);
+      // This should never happen due to selectItemsWithinBudget, but as a safety net
+      break;
+    }
+    
     previousPlatforms = new Set(selectedPlatforms.map(p => p.service));
     
     const monthIdx = (currentMonth + monthOffset) % 12;
     const year = currentYear + Math.floor((currentMonth + monthOffset) / 12);
     const monthStart = new Date(year, monthIdx, 1);
     
-    // STEP C & D: Schedule content fairly
+    // STEP C & D: Schedule content fairly (only for items selected within budget)
     const { scheduledItems, totalWatchedHours } = scheduleContentForMonth(
       selectedPlatforms,
       contentState,
@@ -549,7 +629,6 @@ export function optimizeSubscriptions(
       monthStart
     );
     
-    const monthlyCost = selectedPlatforms.reduce((sum, p) => sum + p.cost, 0);
     const isBudgetConstrained = monthlyCost >= budget * 0.9;
     
     // Determine action type
