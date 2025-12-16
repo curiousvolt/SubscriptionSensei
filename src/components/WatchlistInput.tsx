@@ -365,20 +365,25 @@ export function WatchlistInput({ watchlist, setWatchlist }: WatchlistInputProps)
                 </div>
               </div>
 
-              {/* Priority Selector */}
-              <div className="flex gap-0.5">
+              {/* Priority Selector - 3 clickable states */}
+              <div className="flex gap-1">
                 {(["high", "medium", "low"] as const).map((p) => (
                   <button
                     key={p}
                     onClick={() => updatePriority(item.id, p)}
                     className={cn(
-                      "w-2 h-2 rounded-full transition-all duration-150",
+                      "px-2 py-0.5 text-[10px] font-medium rounded transition-all duration-150 uppercase tracking-wide",
                       item.priority === p
-                        ? getPriorityDotClass(p)
-                        : "bg-muted hover:bg-muted-foreground/30"
+                        ? p === "high" 
+                          ? "bg-primary/15 text-primary border border-primary/30"
+                          : p === "medium"
+                          ? "bg-warning/15 text-warning border border-warning/30"
+                          : "bg-muted text-muted-foreground border border-border"
+                        : "text-muted-foreground/50 hover:text-muted-foreground hover:bg-secondary/50"
                     )}
-                    title={p.charAt(0).toUpperCase() + p.slice(1)}
-                  />
+                  >
+                    {p === "high" ? "H" : p === "medium" ? "M" : "L"}
+                  </button>
                 ))}
               </div>
 
