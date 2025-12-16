@@ -505,18 +505,94 @@ function scheduleContentForMonth(
     if (bucket.length === 0) continue;
     if (remainingTimeHours <= 0) break;
     
-    // FAIR SCHEDULING: Use proportional allocation within the bucket
-    // First, schedule all movies in this bucket (they need single sitting)
+    // Separate movies and series
     const movies = bucket.filter(s => s.item.type === "movie");
     const series = bucket.filter(s => s.item.type !== "movie");
     
+    // FAIR ALLOCATION: Equal share for all items in this priority bucket
+    // Movies get scheduled first only if they fit within their fair share
+    const allActiveItems = bucket.filter(s => s.remainingMinutes > 0);
+    const itemCount = allActiveItems.length;
+    
+    if (itemCount === 0) continue;
+    
+    // Calculate equal share per item (INTRA-MONTH FAIRNESS)
+    const availableMinutes = remainingTimeHours * 60;
+    const equalShareMinutes = Math.floor(availableMinutes / itemCount);
+    
+    // Track allocations for redistribution
+    const allocations = new Map<string, number>();
+    let surplusMinutes = 0;
+    
+    // First pass: allocate equal shares, track surplus from items that finish early
+    for (const state of allActiveItems) {
+      const neededMinutes = state.remainingMinutes;
+      const allocated = Math.min(neededMinutes, equalShareMinutes);
+      allocations.set(state.item.id, allocated);
+      
+      // If item needs less than equal share, track surplus
+      if (neededMinutes < equalShareMinutes) {
+        surplusMinutes += equalShareMinutes - neededMinutes;
+      }
+    }
+    
+    // Second pass: redistribute surplus to items that can use more
+    if (surplusMinutes > 0) {
+      const needsMore = allActiveItems.filter(s => {
+        const alloc = allocations.get(s.item.id) || 0;
+        return s.remainingMinutes > alloc;
+      });
+      
+      while (surplusMinutes > 0 && needsMore.length > 0) {
+        const extraPerItem = Math.floor(surplusMinutes / needsMore.length);
+        if (extraPerItem === 0) {
+          // Distribute remaining 1 minute at a time
+          for (const state of needsMore) {
+            if (surplusMinutes <= 0) break;
+            const currentAlloc = allocations.get(state.item.id) || 0;
+            const canUse = state.remainingMinutes - currentAlloc;
+            if (canUse > 0) {
+              allocations.set(state.item.id, currentAlloc + 1);
+              surplusMinutes -= 1;
+            }
+          }
+          break;
+        }
+        
+        let redistributed = 0;
+        for (const state of needsMore) {
+          const currentAlloc = allocations.get(state.item.id) || 0;
+          const canUse = Math.min(extraPerItem, state.remainingMinutes - currentAlloc);
+          if (canUse > 0) {
+            allocations.set(state.item.id, currentAlloc + canUse);
+            redistributed += canUse;
+          }
+        }
+        
+        surplusMinutes -= redistributed;
+        if (redistributed === 0) break;
+        
+        // Update needsMore list
+        needsMore.length = 0;
+        for (const state of allActiveItems) {
+          const alloc = allocations.get(state.item.id) || 0;
+          if (state.remainingMinutes > alloc) {
+            needsMore.push(state);
+          }
+        }
+      }
+    }
+    
     // Schedule movies first (single sitting requirement)
+    // But only if their full duration fits within their allocation
     for (const state of movies) {
       if (remainingTimeHours <= 0) break;
       
       const movieEffHours = state.remainingMinutes / 60;
+      const allocatedMinutes = allocations.get(state.item.id) || 0;
       
-      if (movieEffHours <= remainingTimeHours) {
+      // Movie must fit entirely within allocation (can't partially watch a movie)
+      if (state.remainingMinutes <= allocatedMinutes && movieEffHours <= remainingTimeHours) {
         const startDate = new Date(monthStart);
         startDate.setDate(startDate.getDate() + currentDay - 1);
         
@@ -535,56 +611,15 @@ function scheduleContentForMonth(
         currentDay += 1;
         dailyRemainingHours = DAILY_WATCH_HOURS;
       }
-      // Skip movies that don't fit (will be scheduled next month)
+      // Movies that don't fit will be scheduled next month
     }
     
-    // PROPORTIONAL ALLOCATION for series within same priority bucket
-    // Calculate total remaining minutes for series in this bucket
+    // Schedule series with their fair allocated time
     const activeSeries = series.filter(s => s.remainingMinutes > 0);
-    if (activeSeries.length === 0 || remainingTimeHours <= 0) continue;
     
-    const totalSeriesMinutes = activeSeries.reduce((sum, s) => sum + s.remainingMinutes, 0);
-    const availableMinutesForSeries = remainingTimeHours * 60;
-    
-    // Proportional time allocation per series
-    // Each series gets time proportional to its remaining minutes
-    const allocations = new Map<string, number>();
-    
-    for (const state of activeSeries) {
-      // Proportional share = (item's remaining / total remaining) * available time
-      const proportion = state.remainingMinutes / totalSeriesMinutes;
-      const allocatedMinutes = Math.min(
-        state.remainingMinutes,
-        Math.floor(proportion * availableMinutesForSeries)
-      );
-      allocations.set(state.item.id, allocatedMinutes);
-    }
-    
-    // Distribute any rounding remainder fairly (round-robin)
-    let allocatedTotal = Array.from(allocations.values()).reduce((a, b) => a + b, 0);
-    let remainderMinutes = availableMinutesForSeries - allocatedTotal;
-    let seriesIndex = 0;
-    
-    while (remainderMinutes > 0 && activeSeries.length > 0) {
-      const state = activeSeries[seriesIndex % activeSeries.length];
-      const currentAlloc = allocations.get(state.item.id) || 0;
-      const maxCanAdd = state.remainingMinutes - currentAlloc;
-      
-      if (maxCanAdd > 0) {
-        const toAdd = Math.min(maxCanAdd, 30); // Add in 30-min chunks
-        allocations.set(state.item.id, currentAlloc + toAdd);
-        remainderMinutes -= toAdd;
-      }
-      
-      seriesIndex++;
-      // Prevent infinite loop
-      if (seriesIndex > activeSeries.length * 10) break;
-    }
-    
-    // Schedule series with their allocated time
     for (const state of activeSeries) {
       const allocatedMinutes = allocations.get(state.item.id) || 0;
-      if (allocatedMinutes <= 0) continue;
+      if (allocatedMinutes <= 0 || remainingTimeHours <= 0) continue;
       
       const startDay = currentDay;
       const startDate = new Date(monthStart);
