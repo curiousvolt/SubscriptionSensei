@@ -1,73 +1,71 @@
-# Welcome to your Lovable project
+Subscription Sensei helps users avoid overspending on streaming subscriptions by generating an optimal, month-by-month subscription plan based on what they want to watch, their priorities, and a fixed monthly budget.
 
-## Project info
+Instead of subscribing to everything at once, users get a calendar-accurate plan that intelligently rotates subscriptions while respecting real watch-time constraints.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+> Hackathon prototype focused on algorithmic correctness and constraint handling.
 
-## How can I edit this code?
+---
+# Workflow
 
-There are several ways of editing your application.
+- Accepts a watchlist of movies and TV series
+- Supports priority levels (High / Medium / Low)
+- Assumes realistic watch time (≈ 2 hours/day)
+- Enforces **integer subscription months** only
+- Treats **monthly budget as a hard constraint**
+- Prevents overlapping watch timelines
+- Automatically rotates subscriptions to reduce waste
+- Generates a clear multi-month viewing plan
 
-**Use Lovable**
+---
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+# Algorithm Principles
 
-Changes made via Lovable will be committed automatically to this repo.
+- **Priority affects order, not duration**  (real watch time is never inflated)
+- **Budget is non-negotiable**  (monthly spend never exceeds the user limit)
+- **Fair scheduling**   (items with the same priority progress together)
+- **Human-realistic timelines**  (one person, one schedule, no overlaps)
+- **No unnecessary splitting**  (a series is completed within a month if it fits)
 
-**Use your preferred IDE**
+The goal is correctness and trustworthiness, not feature bloat.
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+---
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+# Demo
 
-Follow these steps:
+![Demo GIF](public/Animation.gif)
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+URL:   https://subscriptionsensei.lovable.app/
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+---
+# Tech stack
 
-# Step 3: Install the necessary dependencies.
-npm i
+- React
+- TypeScript
+- Vite
+- Tailwind CSS
+- shadcn/ui
+- TMDB API (content metadata)
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
+---
+
+# Development
+
+### Prerequisites
+- Node.js
+- npm
+
+### Run locally
+
+```
+git clone https://github.com/curiousvolt/SubscriptionSensei.git
+
+cd SubscriptionSensei
+
+npm install
+
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+## Built with Lovable
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
-
-**Use GitHub Codespaces**
-
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+This project was vibe-coded using **Lovable** for rapid prototyping and iteration, with a strong focus on manual reasoning around algorithms, constraints, and edge cases.
