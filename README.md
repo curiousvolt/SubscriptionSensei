@@ -1,3 +1,5 @@
+# SubscriptionSensei
+
 Subscription Sensei helps users avoid overspending on streaming subscriptions by generating an optimal, month-by-month subscription plan based on what they want to watch, their priorities, and a fixed monthly budget.
 
 Instead of subscribing to everything at once, users get a calendar-accurate plan that intelligently rotates subscriptions while respecting real watch-time constraints.
